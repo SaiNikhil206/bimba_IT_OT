@@ -1,0 +1,190 @@
+name: bimba-poc
+
+# BIMBA IT/OT integration POC - Model B (hybrid edge-to-cloud)
+#
+#   plant network : simulated OT devices, edge agent, edge broker (Purdue L0-L3)
+#   wan network   : the only path from plant to cloud (edge broker -> cloud broker, TLS 8883)
+#   cloud network : cloud broker, Boomi runtime, ingest, DB, dashboards, mock ERP/HRM
+#
+# Simulate a WAN outage:  scripts/wan.ps1 down   |   restore:  scripts/wan.ps1 up
+
+x-sim: &sim
+  build:
+    context: .
+    dockerfile: simulators/Dockerfile
+  restart: unless-stopped
+  networks: [plant]
+
+services:
+  # ===================================================================== PLANT
+  plc-sim:                      # SCADA/PLC - Modbus TCP
+    <<: *sim
+    command: ["python", "-u", "modbus_plc.py"]
+    ports: ["5020:5020"]
+
+  opcua-sim:                    # OPC UA server
+    <<: *sim
+    command: ["python", "-u", "opcua_meter.py"]
+    ports: ["4840:4840"]
+
+  mqtt-devices:                 # raw JSON + Sparkplug B devices
+    <<: *sim
+    command: ["python", "-u", "mqtt_devices.py"]
+    depends_on: [edge-mqtt]
+
+  legacy-scada-db:              # legacy SCADA SQL database (operator journal)
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scada
+      POSTGRES_PASSWORD: scada
+      POSTGRES_DB: legacy
+    volumes: [legacy-db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada -d legacy"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [plant]
+
+  legacy-scada:                 # legacy SCADA XML historian (REST)
+    <<: *sim
+    command: ["python", "-u", "legacy_scada.py"]
+    ports: ["8080:8080"]
+    depends_on:
+      legacy-scada-db: {condition: service_healthy}
+
+  certs-init:                   # one-shot: POC CA + broker/bridge certificates
+    image: alpine/openssl:3.3.2
+    entrypoint: ["sh"]
+    command: ["/scripts/gen-certs.sh"]
+    volumes:
+      - ./certs/gen-certs.sh:/scripts/gen-certs.sh:ro
+      - certs:/certs
+    network_mode: none
+
+  edge-mqtt:                    # plant broker, disk store-and-forward, TLS bridge to cloud
+    image: eclipse-mosquitto:2.0.18
+    volumes:
+      - ./edge/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - edge-mqtt-data:/mosquitto/data
+      - certs:/certs:ro
+    ports: ["1883:1883"]
+    depends_on:
+      certs-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    networks: [plant, wan]
+
+  edge-agent:                   # BIMBA edge agent: extract + normalize -> canonical JSON
+    build:
+      context: .
+      dockerfile: edge/agent/Dockerfile
+    environment:
+      CONFIG_FILE: /app/config.yaml
+    volumes:
+      - ./edge/agent/config.yaml:/app/config.yaml:ro
+      - edge-agent-data:/data
+    depends_on: [edge-mqtt, plc-sim, opcua-sim, legacy-scada]
+    restart: unless-stopped
+    networks: [plant]
+
+  # ===================================================================== CLOUD
+  cloud-mqtt:                   # cloud ingestion broker (TLS 8883 for plants, 1883 internal)
+    image: eclipse-mosquitto:2.0.18
+    volumes:
+      - ./cloud/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - cloud-mqtt-data:/mosquitto/data
+      - certs:/certs:ro
+    ports:
+      - "8883:8883"
+      - "1884:1883"             # MQTT Explorer / Boomi on the host: localhost:1884
+    depends_on:
+      certs-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    networks: [wan, cloud]
+
+  db:
+    image: timescale/timescaledb:2.16.1-pg16
+    environment:
+      POSTGRES_USER: scada
+      POSTGRES_PASSWORD: scada
+      POSTGRES_DB: scada
+    ports: ["5433:5432"]
+    volumes:
+      - ./cloud/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scada -d scada"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [cloud]
+
+  ingest:                       # canonical MQTT -> TimescaleDB
+    build: ./cloud/ingest
+    command: ["python", "-u", "ingest.py"]
+    environment:
+      MQTT_HOST: cloud-mqtt
+      DB_DSN: postgresql://scada:scada@db:5432/scada
+    depends_on:
+      db: {condition: service_healthy}
+      cloud-mqtt: {condition: service_started}
+    restart: unless-stopped
+    networks: [cloud]
+
+  enterprise-mock:              # mock ERP / HRM / data-lake endpoints for Boomi to deliver to
+    build: ./cloud/ingest
+    command: ["python", "-u", "enterprise_mock.py"]
+    environment:
+      DB_DSN: postgresql://scada:scada@db:5432/scada
+    ports: ["8090:8090"]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [cloud]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/bimba-overview.json
+    ports: ["3000:3000"]
+    volumes:
+      - ./cloud/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./cloud/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      db: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [cloud]
+
+  boomi-atom:                   # Boomi runtime (Model B: cloud side). Start with --profile boomi
+    profiles: ["boomi"]
+    image: boomi/atom:release
+    hostname: bimba-atom
+    environment:
+      BOOMI_ATOMNAME: ${BOOMI_ATOMNAME:-BIMBA-POC-Atom}
+      INSTALL_TOKEN: ${BOOMI_INSTALL_TOKEN:-}
+      BOOMI_ENVIRONMENTID: ${BOOMI_ENVIRONMENTID:-}
+      ATOM_LOCALHOSTID: bimba-atom
+    volumes: [boomi-data:/mnt/boomi]
+    restart: unless-stopped
+    networks: [cloud]
+
+networks:
+  plant:
+  wan:
+  cloud:
+
+volumes:
+  certs:
+  edge-mqtt-data:
+  edge-agent-data:
+  cloud-mqtt-data:
+  legacy-db-data:
+  db-data:
+  grafana-data:
+  boomi-data:

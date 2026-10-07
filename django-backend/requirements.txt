@@ -1,0 +1,8 @@
+Django==4.0.10
+channels==3.0.5
+uvicorn[standard]==0.31.1
+psycopg[binary]==3.2.3
+paho-mqtt==2.1.0
+psycopg2-binary==2.9.9
+asyncua==1.1.5
+kafka-python==2.2.15

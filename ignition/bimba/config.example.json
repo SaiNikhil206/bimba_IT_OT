@@ -1,0 +1,113 @@
+{
+  "plantId": "PLANT01",
+  "edgeId": "ignition-gw01",
+  "tagRoots": [
+    "[default]BIMBA"
+  ],
+  "defaultMachineId": "IGNITION",
+  "rediscoverSeconds": 30,
+  "batch": {
+    "maxMessages": 500,
+    "maxWaitMs": 1000
+  },
+  "queueCapacity": 100000,
+  "buffer": {
+    "maxMegabytes": 512,
+    "replayPerCycle": 20
+  },
+  "provisionTagsFile": "demo-tags.json",
+  "provisionTagsBasePath": "[default]",
+  "destinations": [
+    {
+      "name": "boomi-eventstreams",
+      "role": "primary",
+      "enabled": true,
+      "transport": "eventstreams",
+      "url": "https://usa-east-web.eventstreams.boomi.com/rest/singlemsg/easystepinitservicesllc-4ZNYGO/d98ab861-8bc0-4a65-a6f2-a8dcc47b4e94/BIMBA",
+      "esMode": "batch",
+      "auth": {
+        "type": "bearer",
+        "token": "CHANGE_ME"
+      },
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 15,
+      "esApi": "auto"
+    },
+    {
+      "name": "boomi",
+      "role": "primary",
+      "enabled": false,
+      "transport": "rest",
+      "url": "http://boomi-atom:9090/ws/rest/bimba/ingest",
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 15,
+      "auth": {
+        "type": "basic",
+        "username": "CHANGE_ME@account",
+        "password": "CHANGE_ME"
+      }
+    },
+    {
+      "name": "boomi-mqtt",
+      "role": "primary",
+      "enabled": false,
+      "transport": "mqtt",
+      "brokerUrl": "tcp://mqtt:1883",
+      "topic": "bimba/v1/{plantId}/boomi",
+      "qos": 1,
+      "clientId": "ignition-gw01-boomi",
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 15
+    },
+    {
+      "name": "bimba-ingest",
+      "role": "failover",
+      "enabled": true,
+      "transport": "rest",
+      "url": "http://django:8000/api/ingest/",
+      "headers": {
+        "X-API-Key": "dev-ingest-key"
+      },
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 10,
+      "probe": true,
+      "probeEverySeconds": 30
+    },
+    {
+      "name": "bimba-ingest-mqtt",
+      "role": "failover",
+      "enabled": false,
+      "transport": "mqtt",
+      "brokerUrl": "tcp://mqtt:1883",
+      "topic": "bimba/v1/{plantId}/django",
+      "qos": 1,
+      "clientId": "ignition-gw01-django",
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 10
+    },
+    {
+      "name": "kafka",
+      "role": "mirror",
+      "enabled": true,
+      "transport": "kafka",
+      "bootstrapServers": "kafka:9092",
+      "topic": "bimba.{plantId}.telemetry",
+      "kafkaMode": "batch",
+      "kafka": {},
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 15
+    },
+    {
+      "name": "it-webhook",
+      "role": "mirror",
+      "enabled": false,
+      "transport": "rest",
+      "url": "https://CHANGE_ME.example.com/bimba/ingest",
+      "headers": {
+        "Authorization": "Bearer CHANGE_ME"
+      },
+      "timeoutMs": 5000,
+      "retryAfterSeconds": 30
+    }
+  ]
+}

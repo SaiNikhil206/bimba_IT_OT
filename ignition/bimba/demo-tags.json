@@ -1,0 +1,213 @@
+{
+  "name": "BIMBA",
+  "tagType": "Folder",
+  "tags": [
+    {
+      "name": "PUMP-P1",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "inlet_flow",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR2",
+          "dataType": "Float8",
+          "engUnit": "m3/h",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 10,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        },
+        {
+          "name": "discharge_pressure",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR4",
+          "dataType": "Float8",
+          "engUnit": "bar",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 100,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        },
+        {
+          "name": "motor_temp",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR5",
+          "dataType": "Float8",
+          "engUnit": "degC",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 10,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        },
+        {
+          "name": "motor_current",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR6",
+          "dataType": "Float8",
+          "engUnit": "A",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 10,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        },
+        {
+          "name": "running",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]C1",
+          "dataType": "Boolean"
+        },
+        {
+          "name": "tripped",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]C2",
+          "dataType": "Boolean"
+        }
+      ]
+    },
+    {
+      "name": "TANK-T1",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "level",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR1",
+          "dataType": "Float8",
+          "engUnit": "%",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 100,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        },
+        {
+          "name": "outlet_flow",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[PLC]HR3",
+          "dataType": "Float8",
+          "engUnit": "m3/h",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 10,
+          "scaledLow": 0,
+          "scaledHigh": 1
+        }
+      ]
+    },
+    {
+      "name": "SUBSTN-M1",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "bus_voltage",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.Voltage",
+          "dataType": "Float8",
+          "engUnit": "V"
+        },
+        {
+          "name": "feeder_current",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.Current",
+          "dataType": "Float8",
+          "engUnit": "A"
+        },
+        {
+          "name": "active_power",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.PowerKW",
+          "dataType": "Float8",
+          "engUnit": "kW"
+        },
+        {
+          "name": "energy_total",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.EnergyKWh",
+          "dataType": "Float8",
+          "engUnit": "kWh"
+        },
+        {
+          "name": "frequency",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.Frequency",
+          "dataType": "Float8",
+          "engUnit": "Hz"
+        },
+        {
+          "name": "breaker_closed",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "opcServer": "METER",
+          "opcItemPath": "ns=2;s=Meter.BreakerClosed",
+          "dataType": "Boolean"
+        }
+      ]
+    },
+    {
+      "name": "LINE-SIM",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "speed",
+          "tagType": "AtomicTag",
+          "valueSource": "expr",
+          "expression": "240 + 15 * sin(toMillis(now(1000)) / 60000.0)",
+          "dataType": "Float8",
+          "engUnit": "bpm"
+        },
+        {
+          "name": "temperature",
+          "tagType": "AtomicTag",
+          "valueSource": "expr",
+          "expression": "60 + 5 * sin(toMillis(now(1000)) / 90000.0)",
+          "dataType": "Float8",
+          "engUnit": "degC"
+        },
+        {
+          "name": "running",
+          "tagType": "AtomicTag",
+          "valueSource": "expr",
+          "expression": "getSecond(now(1000)) < 50",
+          "dataType": "Boolean"
+        },
+        {
+          "name": "state",
+          "tagType": "AtomicTag",
+          "valueSource": "expr",
+          "expression": "if(getSecond(now(1000)) < 50, 'RUNNING', 'IDLE')",
+          "dataType": "String"
+        }
+      ]
+    }
+  ]
+}

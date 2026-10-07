@@ -1,0 +1,107 @@
+# BIMBA edge agent configuration (plant PLANT01, Model B hybrid edge-to-cloud)
+#
+# Every reading from every source is normalized into the canonical JSON schema
+# (docs/canonical-schema.json) and published to the local edge broker on
+#   {topic_prefix}/{plantId}/{category}/{machineId}/{tagName}
+# Categories: telemetry | equipment_status | alarm | operator_log | status
+
+plant_id: PLANT01
+edge_id: plant01-edge
+topic_prefix: bimba/v1
+state_file: /data/state.json
+
+mqtt:                      # local (plant) broker - FR-2: any MQTT 3.1.1 broker
+  host: edge-mqtt
+  port: 1883
+  client_id: bimba-edge-agent
+
+defaults:
+  poll_interval_s: 2
+
+sources:
+  # ---------------------------------------------------------- SCADA / PLC via Modbus TCP
+  - name: pump_station_plc
+    protocol: modbus
+    host: plc-sim
+    port: 5020
+    unit_id: 1
+    machine_id: PUMP-P1
+    tags:
+      - {name: tank_level,         type: holding, address: 0, scale: 0.01, unit: "%",    machine_id: TANK-T1, alarm: {low: 20, high: 90, deadband: 1}}
+      - {name: inlet_flow,         type: holding, address: 1, scale: 0.1,  unit: "m3/h"}
+      - {name: outlet_flow,        type: holding, address: 2, scale: 0.1,  unit: "m3/h", machine_id: TANK-T1}
+      - {name: discharge_pressure, type: holding, address: 3, scale: 0.01, unit: "bar",  alarm: {high: 6}}
+      - {name: motor_temp,         type: holding, address: 4, scale: 0.1,  unit: "degC", alarm: {high: 80, deadband: 2}}
+      - {name: motor_current,      type: holding, address: 5, scale: 0.1,  unit: "A"}
+      - {name: running,            type: coil,    address: 0, category: equipment_status}
+      - {name: tripped,            type: coil,    address: 1, category: equipment_status, alarm: {on_value: 1, message: "Pump P1 tripped"}}
+
+  # ---------------------------------------------------------- OPC UA
+  - name: substation_meter
+    protocol: opcua
+    url: opc.tcp://opcua-sim:4840/scada/
+    machine_id: SUBSTN-M1
+    tags:
+      - {name: bus_voltage,    node: "ns=2;s=Meter.Voltage",       unit: "V",   alarm: {low: 380, high: 420, deadband: 2}}
+      - {name: feeder_current, node: "ns=2;s=Meter.Current",       unit: "A"}
+      - {name: active_power,   node: "ns=2;s=Meter.PowerKW",       unit: "kW"}
+      - {name: energy_total,   node: "ns=2;s=Meter.EnergyKWh",     unit: "kWh"}
+      - {name: frequency,      node: "ns=2;s=Meter.Frequency",     unit: "Hz",  alarm: {low: 49.8, high: 50.2}}
+      - {name: power_factor,   node: "ns=2;s=Meter.PowerFactor"}
+      - {name: breaker_closed, node: "ns=2;s=Meter.BreakerClosed", category: equipment_status, alarm: {on_value: 0, message: "Main breaker open"}}
+
+  # ---------------------------------------------------------- legacy SCADA XML (REST)
+  - name: boiler_house_scada
+    protocol: scada_xml
+    url: http://legacy-scada:8080/historian/snapshot.xml
+    machine_id: BOILER-01
+    poll_interval_s: 5
+    tags:
+      - {point: BLR1.STEAM_PRESS, name: steam_pressure, unit: bar,   alarm: {high: 11.8}}
+      - {point: BLR1.STEAM_TEMP,  name: steam_temp,     unit: degC}
+      - {point: BLR1.DRUM_LEVEL,  name: drum_level,     unit: "%",   alarm: {low: 40, high: 60}}
+      - {point: BLR1.FUEL_FLOW,   name: fuel_flow,      unit: Nm3/h}
+      - {point: BLR1.BURNER_ON,   name: burner_on,      category: equipment_status}
+      - {point: BLR1.STEAM_SP,    name: steam_setpoint, unit: bar}
+
+  # ---------------------------------------------------------- legacy SCADA DB (JDBC-style SQL poll)
+  - name: boiler_operator_log
+    protocol: sql
+    dsn: postgresql://scada:scada@legacy-scada-db:5432/legacy
+    machine_id: BOILER-01
+    poll_interval_s: 5
+    category: operator_log
+    tag_name: operator_action
+    key_column: id
+    time_column: ts
+    query: >
+      SELECT id, ts, operator_id, operator_name, shift, action, object, details
+      FROM operator_log WHERE id > $1 ORDER BY id LIMIT 500
+
+  # ---------------------------------------------------------- MQTT raw JSON device
+  - name: filler_line1
+    protocol: mqtt_json
+    topic: plant01/line1/filler01/telemetry
+    machine_id: FILLER-01
+    timestamp_field: ts
+    stale_after_s: 15
+    tags:
+      - {name: machine_state,  path: data.state, category: equipment_status}
+      - {name: speed,          path: data.speed_bpm,      unit: bpm, alarm: {low: 200}}
+      - {name: good_count,     path: data.good_count}
+      - {name: reject_count,   path: data.reject_count}
+      - {name: fill_volume,    path: data.fill_volume_ml, unit: ml}
+
+  # ---------------------------------------------------------- MQTT Sparkplug B
+  - name: sparkplug_plant01
+    protocol: sparkplug_b
+    group_id: PLANT01
+    stale_after_s: 15
+    # device id -> machine id (default: device id as-is)
+    devices: {PRESS-01: PRESS-01}
+    units: {"Hydraulic/Pressure": bar, "Hydraulic/OilTemp": degC, "Ram/Position": mm}
+    categories:              # fnmatch on metric name, first match wins
+      "Status/*": equipment_status
+    alarms:
+      "Hydraulic/OilTemp": {high: 65}
+      "Status/State": {on_value: FAULT, message: "Press fault"}

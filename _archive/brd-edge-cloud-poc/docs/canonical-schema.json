@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bimba:canonical:1.0",
+  "title": "BIMBA canonical OT message",
+  "description": "One tag value from any OT protocol (Modbus/SCADA, OPC UA, SCADA XML, SQL, MQTT JSON, Sparkplug B), normalized by the BIMBA edge agent (BRD FR-3). Published on MQTT topic bimba/v1/{plantId}/{category}/{machineId}/{tagName}.",
+  "type": "object",
+  "required": ["schemaVersion", "messageId", "plantId", "machineId", "timestamp", "tagName", "tagValue", "category"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "messageId": {
+      "type": "string", "format": "uuid",
+      "description": "Unique per message. Consumers de-duplicate on this (at-least-once delivery). Deterministic (UUIDv5) for SQL-sourced records so replays keep the same id."
+    },
+    "plantId":   { "type": "string", "examples": ["PLANT01"] },
+    "machineId": { "type": "string", "examples": ["PUMP-P1", "PRESS-01", "BOILER-01"] },
+    "timestamp": { "type": "string", "format": "date-time", "description": "Source timestamp (UTC, ISO-8601, ms precision)." },
+    "tagName":   { "type": "string", "pattern": "^[a-z0-9_]+$", "examples": ["tank_level", "status_state"] },
+    "tagValue": {
+      "description": "number | boolean | string | object | null. Objects are used for alarm, operator_log and status categories.",
+      "type": ["number", "boolean", "string", "object", "null"]
+    },
+    "dataType": { "enum": ["number", "boolean", "string", "object", "null"] },
+    "unit":     { "type": ["string", "null"], "examples": ["bar", "degC", "m3/h"] },
+    "quality":  { "enum": ["GOOD", "UNCERTAIN", "BAD"] },
+    "category": {
+      "enum": ["telemetry", "equipment_status", "alarm", "operator_log", "status"],
+      "description": "Routing key. telemetry -> Event Streams/data lake; equipment_status -> ERP; operator_log -> HRM; alarm -> MES/CMMS/notifications; status -> integration monitoring."
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "protocol": { "enum": ["modbus", "opcua", "scada_xml", "sql", "mqtt_json", "sparkplug_b"] },
+        "system":   { "type": "string", "description": "Configured source name at the edge." },
+        "address":  { "type": ["string", "null"], "description": "Protocol address: HR0, ns=2;s=Meter.Voltage, EN1/PRESS-01:Status/State, id=42 ..." }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "description": "Delivery audit: seq is gap-free per session, so the cloud can prove zero data loss.",
+      "properties": {
+        "edgeId":  { "type": "string" },
+        "session": { "type": "string", "format": "uuid" },
+        "seq":     { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schemaVersion": "1.0", "messageId": "d8a80714-1b62-4c59-ad76-2dc031a6a33f",
+      "plantId": "PLANT01", "machineId": "SUBSTN-M1", "timestamp": "2026-09-28T16:39:06.385Z",
+      "tagName": "bus_voltage", "tagValue": 401.32, "dataType": "number", "unit": "V", "quality": "GOOD",
+      "category": "telemetry",
+      "source": { "protocol": "opcua", "system": "substation_meter", "address": "ns=2;s=Meter.Voltage" },
+      "edge": { "edgeId": "plant01-edge", "session": "93a437a7-e6bf-4502-a343-2a664eeb5d54", "seq": 3974 }
+    },
+    {
+      "schemaVersion": "1.0", "messageId": "a3a28b4a-6b18-4da9-a130-873d089ca515",
+      "plantId": "PLANT01", "machineId": "PRESS-01", "timestamp": "2026-09-28T16:39:04.315Z",
+      "tagName": "status_running", "tagValue": true, "dataType": "boolean", "unit": null, "quality": "GOOD",
+      "category": "equipment_status",
+      "source": { "protocol": "sparkplug_b", "system": "sparkplug_plant01", "address": "EN1/PRESS-01:Status/Running" },
+      "edge": { "edgeId": "plant01-edge", "session": "93a437a7-e6bf-4502-a343-2a664eeb5d54", "seq": 3940 }
+    },
+    {
+      "schemaVersion": "1.0", "messageId": "56177b4b-2f56-5b36-9fda-26577ee0e137",
+      "plantId": "PLANT01", "machineId": "BOILER-01", "timestamp": "2026-09-28T16:39:22.724Z",
+      "tagName": "operator_action",
+      "tagValue": { "id": 11, "ts": "2026-09-28T16:39:22.724Z", "operator_id": "OP1005", "operator_name": "J. Thomas",
+                    "shift": "B", "action": "ALARM_ACK", "object": "BLR1.FUEL_FLOW",
+                    "details": { "alarm": "HI", "comment": "acknowledged" } },
+      "dataType": "object", "unit": null, "quality": "GOOD", "category": "operator_log",
+      "source": { "protocol": "sql", "system": "boiler_operator_log", "address": "id=11" },
+      "edge": { "edgeId": "plant01-edge", "session": "93a437a7-e6bf-4502-a343-2a664eeb5d54", "seq": 4279 }
+    },
+    {
+      "schemaVersion": "1.0", "messageId": "0b6c3e0e-5d1f-4d8e-9a57-6a1f2f0c9e11",
+      "plantId": "PLANT01", "machineId": "PUMP-P1", "timestamp": "2026-09-28T16:36:08.299Z",
+      "tagName": "motor_temp",
+      "tagValue": { "kind": "HIGH", "state": "ACTIVE", "value": 80.4, "limit": 80, "message": "PUMP-P1 motor_temp high" },
+      "dataType": "object", "unit": null, "quality": "GOOD", "category": "alarm",
+      "source": { "protocol": "modbus", "system": "pump_station_plc", "address": null },
+      "edge": { "edgeId": "plant01-edge", "session": "93a437a7-e6bf-4502-a343-2a664eeb5d54", "seq": 1210 }
+    }
+  ]
+}

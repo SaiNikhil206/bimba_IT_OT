@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+ignition-module/build/
+ignition-module/.gradle/
+ignition/bimba/buffer/
+ignition/bimba/.*.imported
+react-ui/dist/
+ignition/bimba/config.json
+ignition/bimba/*.bak
+ignition/bimba/.*.tmp
+ignition/bimba/console-sources.json
+
+# local archives / tooling
+*.zip
+.github/modernize/

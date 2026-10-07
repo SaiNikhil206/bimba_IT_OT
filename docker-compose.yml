@@ -1,0 +1,168 @@
+name: bimba
+
+# SCADA (Ignition + BIMBA IT/OT Agent module)  --Event Streams REST-->  Boomi Event Streams (primary)
+#   --> Boomi listener process | --REST/MQTT--> BIMBA Ingest (Django, failover)
+#   --> shared PostgreSQL  --> BIMBA (REST + WS, Django)  --> BIMBA live UI
+#
+#   http://localhost:8088   Ignition gateway (admin / password)
+#   http://localhost:3080   BIMBA live UI
+#   http://localhost:8000   BIMBA REST + WS / Django admin (admin / admin)
+
+x-django-env: &django-env                 # shared by django, django-mqtt, django-es-consumer
+  # Shared PostgreSQL (docs/database.md). Set in .env with scripts/set-database.ps1
+  DB_HOST: ${BIMBA_DB_HOST:?set BIMBA_DB_HOST in .env (scripts/set-database.ps1)}
+  DB_PORT: ${BIMBA_DB_PORT:-6433}
+  DB_NAME: ${BIMBA_DB_NAME:-bimba_chromalab}
+  DB_USER: ${BIMBA_DB_USER:?set BIMBA_DB_USER in .env}
+  DB_PASSWORD: ${BIMBA_DB_PASSWORD:?set BIMBA_DB_PASSWORD in .env}
+  DB_SCHEMA: ${BIMBA_DB_SCHEMA:-bimba}
+  INGEST_API_KEY: dev-ingest-key
+  PLUGIN_STATUS_URL: http://ignition:8088/system/bimba-status
+  MQTT_HOST: mqtt
+  MQTT_TOPIC: bimba/v1/+/django
+  DJANGO_ADMIN_USER: admin
+  DJANGO_ADMIN_PASSWORD: admin
+  DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:3080,http://localhost:8000,http://localhost:5173,https://*.ngrok-free.app
+
+services:
+  # ------------------------------------------------------------------ field devices (simulated)
+  plc-sim:                              # Modbus SCADA sim (virtual PLC, Modbus TCP)
+    build: ./simulators
+    command: ["python", "-u", "modbus_plc.py"]
+    ports: ["5020:5020"]
+    restart: unless-stopped
+
+  opcua-sim:
+    build: ./simulators
+    command: ["python", "-u", "opcua_meter.py"]
+    ports: ["4840:4840"]
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ SCADA + our plugin
+  ignition:
+    image: inductiveautomation/ignition:8.1.55
+    hostname: ignition
+    environment:
+      ACCEPT_IGNITION_EULA: "Y"
+      GATEWAY_ADMIN_USERNAME: admin
+      GATEWAY_ADMIN_PASSWORD: password
+      IGNITION_EDITION: standard
+      TZ: UTC
+      # config.json "token": "${BOOMI_ES_PRODUCE_TOKEN}" -> produce token from .env (falls back to the consume token)
+      BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-${BOOMI_ES_CONSUME_TOKEN:-}}
+    # unsigned POC module -> gateway must allow unsigned modules
+    command: ["-n", "bimba-gw", "-m", "1536", "--", "wrapper.java.additional.10=-Dignition.allowunsignedmodules=true"]
+    ports: ["8088:8088"]
+    volumes:
+      - ignition-data:/usr/local/bin/ignition/data
+      - ./ignition/bimba:/usr/local/bin/ignition/data/bimba            # plugin config + disk buffer
+      - ./ignition-module/build/modl/BIMBA-IT-OT-Agent.modl:/usr/local/bin/ignition/user-lib/modules/BIMBA-IT-OT-Agent.modl:ro
+    depends_on: [plc-sim, opcua-sim]
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ transport
+  mqtt:                                 # only for the plugin's MQTT transport. Profile "mqtt"
+    profiles: ["mqtt"]
+    image: eclipse-mosquitto:2.0.18
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt-data:/mosquitto/data
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ end systems
+  django:                               # BIMBA Ingest (failover end system) + BIMBA REST + WS: ingest, API, WebSocket
+    build: ./django-backend
+    environment:
+      <<: *django-env
+      # OT/IT Bridge Console (/console): edits the plugin's config.json + demo-tags.json in this folder
+      BIMBA_CONFIG_DIR: /bimba-config
+      # Event Streams "Test connection" resolves ${BOOMI_ES_PRODUCE_TOKEN} like the gateway does
+      BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-${BOOMI_ES_CONSUME_TOKEN:-}}
+    volumes:
+      - ./ignition/bimba:/bimba-config
+    ports: ["8000:8000"]
+    restart: unless-stopped
+
+  django-mqtt:                          # BIMBA Ingest over MQTT (plugin transport = mqtt). Profile "mqtt"
+    profiles: ["mqtt"]
+    build: ./django-backend
+    command: ["python", "manage.py", "mqtt_ingest"]
+    environment: *django-env
+    depends_on: [django, mqtt]
+    restart: unless-stopped
+
+  django-es-consumer:                   # consumes the Boomi Event Streams subscription -> PostgreSQL ('boomi-es')
+    build: ./django-backend
+    command: ["python", "manage.py", "es_consume"]
+    environment:
+      <<: *django-env
+      ES_CONSUME_URL: ${BOOMI_ES_CONSUME_URL:-}
+      ES_CONSUME_TOKEN: ${BOOMI_ES_CONSUME_TOKEN:-}
+    volumes: [es-spool:/data/es-spool]
+    restart: unless-stopped
+
+  ui:                                   # BIMBA live UI (React + nginx, proxies /api and /ws to BIMBA REST + WS)
+    build: ./react-ui
+    ports: ["3080:80"]
+    depends_on: [django]
+    restart: unless-stopped
+
+  kafka:                                # IT receiver: Apache Kafka (KRaft, single node). Profile "kafka"
+    profiles: ["kafka"]
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+    ports: ["29092:29092"]
+    volumes: [kafka-data:/var/lib/kafka/data]
+    restart: unless-stopped
+
+  kafka-ui:                             # browse topics/messages: http://localhost:8085
+    profiles: ["kafka"]
+    image: provectuslabs/kafka-ui:v0.7.2
+    environment:
+      KAFKA_CLUSTERS_0_NAME: bimba-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports: ["8085:8080"]
+    depends_on: [kafka]
+    restart: unless-stopped
+
+  eventstreams-mock:                    # TEST ONLY: local stand-in for the Event Streams produce REST API
+    profiles: ["es-mock"]
+    build: ./tools/eventstreams-mock
+    environment:
+      MOCK_TOKEN: test-env-token
+    ports: ["8095:8095"]
+
+  boomi-atom:                           # primary end system. Start with: docker compose --profile boomi up -d
+    profiles: ["boomi"]
+    image: boomi/atom:release
+    hostname: boomi-atom
+    environment:
+      BOOMI_ATOMNAME: ${BOOMI_ATOMNAME:-BIMBA-POC-Atom}
+      INSTALL_TOKEN: ${BOOMI_INSTALL_TOKEN:-}
+      BOOMI_ENVIRONMENTID: ${BOOMI_ENVIRONMENTID:-}
+      ATOM_LOCALHOSTID: boomi-atom
+    ports: ["9090:9090"]                # Boomi shared web server (Web Services Server listener)
+    volumes: [boomi-data:/mnt/boomi]
+    restart: unless-stopped
+
+volumes:
+  kafka-data:
+  es-spool:
+  ignition-data:
+  mqtt-data:
+  boomi-data:

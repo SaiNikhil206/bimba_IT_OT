@@ -1,0 +1,17 @@
+apiVersion: 1
+datasources:
+  - name: SCADA-DB
+    uid: scada-pg
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: db:5432
+    user: scada
+    database: scada
+    isDefault: true
+    jsonData:
+      database: scada
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+    secureJsonData:
+      password: scada
