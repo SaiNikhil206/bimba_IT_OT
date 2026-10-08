@@ -12,7 +12,7 @@ repositories {
 
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 
-version = '1.4.0'                                                  // keep in step with the site agent
+version = '1.4.1'                                                  // keep in step with the site agent
 
 jar {
     archiveFileName = 'bimba-edge.jar'

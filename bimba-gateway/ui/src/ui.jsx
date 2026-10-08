@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api.js";
 import { useSession } from "./session.jsx";
 
@@ -91,6 +91,35 @@ export function Verdict({ kind, title, children }) {
         {children && <p>{children}</p>}
       </div>
     </section>
+  );
+}
+
+/**
+ * A left-to-right chain of steps (top to bottom on phones): what feeds what. step = {key, label, value, sub, on,
+ * onClick | to}; a step with onClick is a button, with to a link, otherwise plain.
+ */
+export function Flow({ steps, label }) {
+  return (
+    <ol className="flow" aria-label={label}>
+      {steps.map((s, i) => {
+        const body = (
+          <>
+            <small className="flow-l">{s.label}</small>
+            <b className="ellipsis" title={typeof s.value === "string" ? s.value : undefined}>{s.value}</b>
+            {s.sub && <small className="ellipsis" title={typeof s.sub === "string" ? s.sub : undefined}>{s.sub}</small>}
+          </>
+        );
+        const cls = `flow-i${s.on ? " on" : ""}`;
+        return (
+          <li key={s.key ?? i}>
+            {i > 0 && <span className="flow-a" aria-hidden="true">→</span>}
+            {s.onClick ? <button type="button" className={cls} aria-current={s.on || undefined} onClick={s.onClick}>{body}</button>
+              : s.to ? <Link className={cls} to={s.to}>{body}</Link>
+                : <div className={cls}>{body}</div>}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

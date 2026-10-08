@@ -188,7 +188,7 @@ public class AgentRegistry {
         }
         if (orgs.size() > 1) {
             // only the signed-in user's own organizations are listed
-            ApiError e = new ApiError(409, "Choose the organization this machine belongs to.");
+            ApiError e = new ApiError(409, "Choose the organization this computer belongs to.");
             List<Map<String, String>> list = new ArrayList<>();
             orgs.forEach(o -> list.add(Map.of("slug", o.orgSlug(), "name", o.orgName())));
             e.extra.put("orgs", list);
@@ -265,7 +265,7 @@ public class AgentRegistry {
         }
         String state = (String) row[2];
         if (!"active".equals(state)) {
-            ApiError e = new ApiError(410, "This agent was " + state + ". Reinstall it to register the machine again.");
+            ApiError e = new ApiError(410, "This agent was " + state + ". Reinstall it to register the computer again.");
             e.extra.put("state", state);
             throw e;
         }

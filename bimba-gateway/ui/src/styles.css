@@ -351,9 +351,11 @@ dl.kv dd.bad { color: var(--bad-ink); }
 .crumb a, a.rowlink { text-decoration: none; }
 a.rowlink { color: inherit; }
 a.rowlink:hover b { color: var(--accent); text-decoration: underline; }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+/* the base line is an inset shadow, not a border: the active tab's underline covers it without a negative margin,
+   which made the scrolling tab bar scroll vertically too */
+.tabs { display: flex; gap: 4px; box-shadow: inset 0 -1px 0 var(--border); overflow-x: auto; overflow-y: hidden; }
 .tabs button { border: 0; background: none; padding: 9px 14px; font-weight: 500; color: var(--text-2); cursor: pointer;
-  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  border-bottom: 2px solid transparent; white-space: nowrap; }
 .tabs button.on { color: var(--accent-ink); border-bottom-color: var(--accent); }
 .sugg { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .sugg-i { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--border);
@@ -361,7 +363,7 @@ a.rowlink:hover b { color: var(--accent); text-decoration: underline; }
 .sugg-i > div { min-width: 0; display: flex; flex-direction: column; }
 .sugg-i small { color: var(--muted); font-size: 12px; }
 td small.bad { color: var(--bad-ink); }
-td small.ellipsis { max-width: 340px; }
+td .ellipsis { max-width: 340px; }          /* one-line labels in table cells are cut, never widen the table */
 .tag-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tags { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow: auto; }
 .tag-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
@@ -382,14 +384,45 @@ td small.ellipsis { max-width: 340px; }
 .b-name small { color: var(--muted); font-size: 11.5px; }
 .b-val { text-align: right; color: var(--text-2); }
 .b-val.bad { color: var(--bad-ink); }
+/* per-device data source: device | machine name | tags */
+.dev-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 52px; gap: 8px; align-items: center; }
+.dev-row.head span { font-size: 12px; color: var(--muted); }
+.dev-row input[type="text"] { min-width: 0; }
+.dev-row input[type="checkbox"] { accent-color: var(--accent); }
+.dev-row .r { text-align: right; font-variant-numeric: tabular-nums; }
+.sugg-i .row-acts { display: flex; gap: 6px; flex-shrink: 0; }
 @media (max-width: 860px) {
+  .dev-row { grid-template-columns: auto minmax(0, 1fr) 40px; }
+  .dev-row.head { display: none; }
+  .dev-row > input[type="text"] { grid-column: 2 / 4; grid-row: 2; }
+  .dev-row > .r { grid-column: 3; grid-row: 1; }
   .tag-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .tag-row > :nth-child(3) { display: none; }
   .b-row { grid-template-columns: auto minmax(0, 1fr); }
   .b-val { grid-column: 2; text-align: left; }
 }
-/* machine page: two cards side by side only when both get 360px; label column scales with the card */
+/* agent page: two cards side by side only when both get 360px; label column scales with the card */
 .mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
 .mgrid dl.kv { grid-template-columns: minmax(96px, 36%) minmax(0, 1fr); }
 dl.kv .st { white-space: normal; }
 dl.kv dd small { display: block; }
+/* flow strip: computer -> site agent -> data sources -> machines -> pipelines (top to bottom on phones) */
+.flow { list-style: none; margin: 0; padding: 0; display: flex; gap: 0; align-items: stretch; }
+.flow li { flex: 1 1 0; min-width: 0; display: flex; align-items: center; }
+.flow-a { flex: none; width: 26px; text-align: center; color: var(--muted); }
+.flow-i { flex: 1 1 auto; min-width: 0; align-self: stretch; display: flex; flex-direction: column; gap: 1px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: inherit; text-align: left;
+  text-decoration: none; font: inherit; }
+button.flow-i, a.flow-i { cursor: pointer; }
+button.flow-i:hover, a.flow-i:hover { border-color: var(--border-2); background: var(--sunken); }
+.flow-i.on { border-color: var(--accent); background: var(--accent-soft); }
+.flow-i small { color: var(--muted); font-size: 12px; }
+.flow-i .flow-l { text-transform: uppercase; letter-spacing: .04em; font-size: 11px; font-weight: 600; }
+@media (max-width: 640px) {
+  .flow { flex-direction: column; }
+  .flow li { flex-direction: column; align-items: stretch; }
+  .flow-a { width: auto; line-height: 20px; transform: rotate(90deg); align-self: center; }
+}
+/* at most two lines, then "…" (full text in the title attribute); wraps, so it never widens a table */
+.clamp2 { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+table.narrow-cut td .ellipsis { max-width: 200px; }

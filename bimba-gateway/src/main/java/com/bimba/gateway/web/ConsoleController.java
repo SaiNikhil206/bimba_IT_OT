@@ -4,6 +4,7 @@ import com.bimba.gateway.BimbaGatewayApplication;
 import com.bimba.gateway.GatewayService;
 import com.bimba.gateway.Json;
 import com.bimba.gateway.agents.AgentRegistry;
+import com.bimba.gateway.agents.AgentSources;
 import com.bimba.gateway.agents.EnrollTokens;
 import com.bimba.gateway.agents.InstallerFile;
 import com.bimba.gateway.config.DestinationService;
@@ -61,10 +62,13 @@ public class ConsoleController {
     private final com.bimba.gateway.security.PasswordResetService resets;
     private final EnrollTokens tokens;
     private final InstallerFile installer;
+    private final AgentSources sources;
 
     public ConsoleController(GatewayService gateway, AgentRegistry agents, SecurityService security, OrgService orgs,
                              DestinationService destinations, DestinationStore store, PipelineService pipelines,
-                             com.bimba.gateway.security.PasswordResetService resets, EnrollTokens tokens, InstallerFile installer) {
+                             com.bimba.gateway.security.PasswordResetService resets, EnrollTokens tokens, InstallerFile installer,
+                             AgentSources sources) {
+        this.sources = sources;
         this.tokens = tokens;
         this.installer = installer;
         this.gateway = gateway;
@@ -170,7 +174,17 @@ public class ConsoleController {
     @GetMapping("/agents")
     @PreAuthorize("hasAuthority('agents.view')")
     Map<String, Object> agents(@AuthenticationPrincipal Principal p) throws ApiException {
-        return Map.of("agents", agents.list(p.org()));
+        // with what each agent collects: its data sources and the machines they report as
+        Map<String, Map<String, Object>> collects = sources.summary(p.org());
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (Map<String, Object> a : agents.list(p.org())) {
+            Map<String, Object> m = new LinkedHashMap<>(a);
+            Map<String, Object> c = collects.get((String) a.get("id"));
+            m.put("sources", c == null ? 0 : c.get("sources"));
+            m.put("machines", c == null ? List.of() : c.get("machines"));
+            list.add(m);
+        }
+        return Map.of("agents", list);
     }
 
     @PostMapping("/agents/{id}/revoke")
@@ -216,7 +230,7 @@ public class ConsoleController {
         if (server != null && !server.isBlank()) {
             url = InstallerFile.normalizeServer(server);
             if (url == null) {
-                throw new ApiException(400, "server", "Enter the gateway address machines use, for example https://gateway.example.com:8443");
+                throw new ApiException(400, "server", "Enter the gateway address the SCADA computers use, for example https://gateway.example.com:8443");
             }
         }
         byte[] file;

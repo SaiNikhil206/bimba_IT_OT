@@ -316,44 +316,18 @@ public final class OpcUaDriver implements Driver {
         OpcUaClient c = d.open();
         try {
             NodeId start = nodeId == null || nodeId.isBlank() ? Identifiers.ObjectsFolder : NodeId.parse(nodeId);
-            BrowseDescription bd = new BrowseDescription(start, BrowseDirection.Forward, Identifiers.HierarchicalReferences, true,
-                    uint(NodeClass.Object.getValue() | NodeClass.Variable.getValue()), uint(BrowseResultMask.All.getValue()));
-            List<ReferenceDescription> refs = new ArrayList<>();
-            BrowseResult r = c.browse(new ViewDescription(NodeId.NULL_VALUE, DateTime.MIN_VALUE, uint(0)), uint(Math.max(1, limit)),
-                    List.of(bd)).get(d.timeoutMs, TimeUnit.MILLISECONDS).getResults()[0];
-            if (!r.getStatusCode().isGood()) {
-                throw new Exception("browse failed: " + r.getStatusCode());
-            }
-            if (r.getReferences() != null) {
-                refs.addAll(Arrays.asList(r.getReferences()));
-            }
-            ByteString cp = r.getContinuationPoint();
-            while (cp != null && cp.isNotNull() && refs.size() < limit) {
-                BrowseResult next = c.browseNext(false, List.of(cp)).get(d.timeoutMs, TimeUnit.MILLISECONDS).getResults()[0];
-                if (next.getReferences() != null) {
-                    refs.addAll(Arrays.asList(next.getReferences()));
-                }
-                cp = next.getContinuationPoint();
-            }
-            if (cp != null && cp.isNotNull()) {
-                c.browseNext(true, List.of(cp));          // release the server's continuation point
-            }
+            Children ch = d.children(c, start, limit);
             List<Map<String, Object>> items = new ArrayList<>();
             List<NodeId> variables = new ArrayList<>();
             List<Map<String, Object>> variableItems = new ArrayList<>();
-            for (ReferenceDescription ref : refs) {
-                NodeId id = ref.getNodeId().toNodeId(c.getNamespaceTable()).orElse(null);
-                if (id == null || items.size() >= limit) {
-                    continue;
-                }
+            for (Child child : ch.items()) {
                 Map<String, Object> m = new LinkedHashMap<>();
-                m.put("nodeId", id.toParseableString());
-                m.put("name", ref.getDisplayName() != null && ref.getDisplayName().getText() != null
-                        ? ref.getDisplayName().getText() : ref.getBrowseName().getName());
-                m.put("nodeClass", ref.getNodeClass() == NodeClass.Variable ? "Variable" : "Object");
+                m.put("nodeId", child.id().toParseableString());
+                m.put("name", child.name());
+                m.put("nodeClass", child.variable() ? "Variable" : "Object");
                 items.add(m);
-                if (ref.getNodeClass() == NodeClass.Variable) {
-                    variables.add(id);
+                if (child.variable()) {
+                    variables.add(child.id());
                     variableItems.add(m);
                 }
             }
@@ -371,13 +345,146 @@ public final class OpcUaDriver implements Driver {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("node", start.toParseableString());
             out.put("items", items);
-            out.put("truncated", refs.size() > items.size() || (cp != null && cp.isNotNull()));
+            out.put("truncated", ch.truncated());
             out.put("security", d.chosenSecurity);
             out.put("serverCertSha256", d.serverCertSha256);
             return out;
         } finally {
             c.disconnect().get(2, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * The server's devices as machines: every folder directly under {@code rootNodeId} (null = the server's "Devices"
+     * folder when it has one, as Ignition does, otherwise Objects) is one device, with every variable below it as a tag
+     * named after its path inside the device. Folders in brackets inside a device ([Diagnostics], [Controls]) are the
+     * server's own and skipped; Ignition's device folders themselves are "[name]" and lose the brackets.
+     * {root, machines:[{nodeId, name, tags:[{name, address}], truncated}], truncated}, at most {@code maxTags} tags.
+     */
+    public static Map<String, Object> scan(JsonObject conn, String rootNodeId, int maxTags) throws Exception {
+        OpcUaDriver d = new OpcUaDriver(conn);
+        OpcUaClient c = d.open();
+        try {
+            NodeId root = Identifiers.ObjectsFolder;
+            if (rootNodeId != null && !rootNodeId.isBlank()) {
+                root = NodeId.parse(rootNodeId);
+            } else {
+                for (Child ch : d.children(c, Identifiers.ObjectsFolder, 1000).items()) {
+                    if (!ch.variable() && "Devices".equalsIgnoreCase(ch.name())) {
+                        root = ch.id();
+                        break;
+                    }
+                }
+            }
+            int[] budget = {Math.max(1, maxTags)};
+            boolean truncated = false;
+            List<Map<String, Object>> machines = new ArrayList<>();
+            for (Child dev : d.children(c, root, 1000).items()) {
+                if (dev.variable() || dev.id().getNamespaceIndex().intValue() == 0) {
+                    continue;                                   // the standard Server object and other namespace-0 nodes
+                }
+                if (budget[0] <= 0) {
+                    truncated = true;
+                    break;
+                }
+                List<Map<String, Object>> tags = new ArrayList<>();
+                boolean full = d.collect(c, dev.id(), new ArrayList<>(), tags, new java.util.HashSet<>(), budget, 0);
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("nodeId", dev.id().toParseableString());
+                m.put("name", dev.name().replaceAll("^\\[(.*)]$", "$1"));
+                m.put("tags", tags);
+                m.put("truncated", !full);
+                truncated |= !full;
+                machines.add(m);
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("root", root.toParseableString());
+            out.put("machines", machines);
+            out.put("truncated", truncated);
+            out.put("security", d.chosenSecurity);
+            out.put("serverCertSha256", d.serverCertSha256);
+            return out;
+        } finally {
+            c.disconnect().get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    /** adds the variables below {@code node} to {@code tags}; false when the tag budget ran out */
+    private boolean collect(OpcUaClient c, NodeId node, List<String> path, List<Map<String, Object>> tags, java.util.Set<String> names,
+                            int[] budget, int depth) throws Exception {
+        if (depth > 12) {
+            return true;
+        }
+        for (Child ch : children(c, node, 5000).items()) {
+            if (ch.variable()) {
+                if (budget[0] <= 0) {
+                    return false;
+                }
+                List<String> parts = new ArrayList<>(path);
+                parts.add(ch.name());
+                String base = String.join("_", parts);
+                String name = base;
+                for (int i = 2; !names.add(name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_")); i++) {
+                    name = base + "_" + i;
+                }
+                Map<String, Object> t = new LinkedHashMap<>();
+                t.put("name", name);
+                t.put("address", ch.id().toParseableString());
+                tags.add(t);
+                budget[0]--;
+            } else if (!ch.name().matches("^\\[.*]$")) {
+                List<String> sub = new ArrayList<>(path);
+                sub.add(ch.name());
+                if (!collect(c, ch.id(), sub, tags, names, budget, depth + 1)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private record Child(NodeId id, String name, boolean variable) {
+    }
+
+    private record Children(List<Child> items, boolean truncated) {
+    }
+
+    /** objects and variables directly below a node, at most {@code limit} */
+    private Children children(OpcUaClient c, NodeId node, int limit) throws Exception {
+        BrowseDescription bd = new BrowseDescription(node, BrowseDirection.Forward, Identifiers.HierarchicalReferences, true,
+                uint(NodeClass.Object.getValue() | NodeClass.Variable.getValue()), uint(BrowseResultMask.All.getValue()));
+        List<ReferenceDescription> refs = new ArrayList<>();
+        BrowseResult r = c.browse(new ViewDescription(NodeId.NULL_VALUE, DateTime.MIN_VALUE, uint(0)), uint(Math.max(1, limit)),
+                List.of(bd)).get(timeoutMs, TimeUnit.MILLISECONDS).getResults()[0];
+        if (!r.getStatusCode().isGood()) {
+            throw new Exception("browse failed: " + r.getStatusCode());
+        }
+        if (r.getReferences() != null) {
+            refs.addAll(Arrays.asList(r.getReferences()));
+        }
+        ByteString cp = r.getContinuationPoint();
+        while (cp != null && cp.isNotNull() && refs.size() < limit) {
+            BrowseResult next = c.browseNext(false, List.of(cp)).get(timeoutMs, TimeUnit.MILLISECONDS).getResults()[0];
+            if (next.getReferences() != null) {
+                refs.addAll(Arrays.asList(next.getReferences()));
+            }
+            cp = next.getContinuationPoint();
+        }
+        boolean more = cp != null && cp.isNotNull();
+        if (more) {
+            c.browseNext(true, List.of(cp));              // release the server's continuation point
+        }
+        List<Child> items = new ArrayList<>();
+        for (ReferenceDescription ref : refs) {
+            NodeId id = ref.getNodeId().toNodeId(c.getNamespaceTable()).orElse(null);
+            if (id == null || items.size() >= limit) {
+                continue;
+            }
+            String name = ref.getDisplayName() != null && ref.getDisplayName().getText() != null
+                    ? ref.getDisplayName().getText() : ref.getBrowseName().getName();
+            items.add(new Child(id, name == null ? id.toParseableString() : name, ref.getNodeClass() == NodeClass.Variable));
+        }
+        return new Children(items, more || refs.size() > items.size());
     }
 
     // ------------------------------------------------------------------ helpers

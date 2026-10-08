@@ -9,7 +9,7 @@
     <AssemblyName>BIMBA-Site-Agent-Setup</AssemblyName>
     <RootNamespace>Bimba.SiteAgent</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Product>BIMBA Site Agent</Product>
     <Company>BIMBA</Company>
     <Description>Registers this machine with its organization on the BIMBA Gateway and sends its SCADA data</Description>

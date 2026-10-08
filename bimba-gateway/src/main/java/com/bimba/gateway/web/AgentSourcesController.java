@@ -27,7 +27,8 @@ import java.util.Map;
  *   POST   /agents/{id}/sources              add a data source (OPC UA, Modbus TCP, OPC DA)          agents.manage
  *   PUT    /agents/{id}/sources/{sid}        change it                                               agents.manage
  *   DELETE /agents/{id}/sources/{sid}        remove it                                               agents.manage
- *   POST   /agents/{id}/commands             ask the machine: test | browse | read | discover        agents.manage
+ *   POST   /agents/{id}/sources/{sid}/devices  add or ignore a device the last scan found              agents.manage
+ *   POST   /agents/{id}/commands             ask the machine: test | browse | read | discover | scan agents.manage
  *   GET    /agents/{id}/commands/{cid}       its answer (poll)                                       agents.view
  *   GET    /agents/{id}/live                 last value of every tag the agent sent                  agents.view
  * </pre>
@@ -76,6 +77,19 @@ public class AgentSourcesController {
         String name = sources.deleteSource(id, sid, p.org());
         security.audit(p, "agent.source.delete", name, true, req.getRemoteAddr(), Map.of("agentId", id, "sourceId", sid));
         return Map.of("ok", true);
+    }
+
+    @PostMapping("/agents/{id}/sources/{sid}/devices")
+    @PreAuthorize("hasAuthority('agents.manage')")
+    Map<String, Object> device(@AuthenticationPrincipal Principal p, @PathVariable String id, @PathVariable String sid,
+                               @RequestBody(required = false) String body, HttpServletRequest req) throws ApiException {
+        JsonObject b = ApiErrors.parse(body);
+        Map<String, Object> r = sources.device(id, sid, b, p.org(), p.username());
+        Map<String, Object> d = describe(id, r);
+        d.put("device", b.has("nodeId") ? b.get("nodeId").getAsString() : null);
+        d.put("action", b.has("action") ? b.get("action").getAsString() : null);
+        security.audit(p, "agent.source.device", String.valueOf(r.get("name")), true, req.getRemoteAddr(), d);
+        return r;
     }
 
     @PostMapping("/agents/{id}/commands")

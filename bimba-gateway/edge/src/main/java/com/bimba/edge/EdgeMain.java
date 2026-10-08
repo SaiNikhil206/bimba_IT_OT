@@ -36,8 +36,9 @@ import java.util.concurrent.TimeUnit;
  * BIMBA edge collector: the data-collection process of the BIMBA Site Agent on a SCADA machine. The agent service
  * (bimba-site-agent.exe) starts it and talks JSON lines over stdin/stdout:
  * <pre>
- * in   {"op":"config","plantId":..,"edgeId":..,"sources":[{id,name,kind,settings,tags:[{name,address,unit,dataType}],pollMs,enabled}]}
- *      {"op":"test"|"browse"|"read","id":..,"source":{kind,settings},"nodeId":..,"limit":..,"tags":[..]}
+ * in   {"op":"config","plantId":..,"edgeId":..,"sources":[{id,name,kind,settings,tags:[{name,address,unit,dataType,machine}],pollMs,enabled}]}
+ *      (a tag's machine: it reports as that machine instead of the source's name, so one connection feeds several machines)
+ *      {"op":"test"|"browse"|"scan"|"read","id":..,"source":{kind,settings},"nodeId":..,"limit":..,"tags":[..]}
  * out  {"type":"reading","m":{canonical message}}       every change of value or quality (docs/payload.md)
  *      {"type":"result","id":..,"ok":true,"result":{..}} / {"type":"result","id":..,"ok":false,"error":".."}
  *      {"type":"status","devices":[..]}                  every 10 s
@@ -97,7 +98,7 @@ public final class EdgeMain {
             String op = str(msg, "op");
             switch (op == null ? "" : op) {
                 case "config" -> apply(msg);
-                case "test", "browse", "read" -> work.execute(() -> command(op, msg));
+                case "test", "browse", "scan", "read" -> work.execute(() -> command(op, msg));
                 case "stop" -> {
                     stopCollector();
                     System.exit(0);
@@ -136,7 +137,8 @@ public final class EdgeMain {
             sources.getAsJsonObject(kind).add(id, settings);
             for (JsonElement te : s.has("tags") && s.get("tags").isJsonArray() ? s.getAsJsonArray("tags") : new JsonArray()) {
                 JsonObject t = te.getAsJsonObject();
-                tags.add(tag(machine, id, kind, t));
+                String own = str(t, "machine");
+                tags.add(tag(own == null || own.isBlank() ? machine : own, id, kind, t));
             }
             count++;
         }
@@ -207,6 +209,8 @@ public final class EdgeMain {
                 result = OpcUaDriver.test(settings);
             } else if ("opcua".equals(kind) && "browse".equals(op)) {
                 result = OpcUaDriver.browse(settings, str(msg, "nodeId"), msg.has("limit") ? msg.get("limit").getAsInt() : 500);
+            } else if ("opcua".equals(kind) && "scan".equals(op)) {
+                result = OpcUaDriver.scan(settings, str(msg, "nodeId"), msg.has("limit") ? msg.get("limit").getAsInt() : 5000);
             } else if ("test".equals(op) || "read".equals(op)) {
                 result = readOnce(kind, settings, msg);
             } else {
