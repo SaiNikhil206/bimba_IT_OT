@@ -3,7 +3,7 @@ import { useChartTheme, VIA_LABEL, VIA_ORDER } from "../theme.js";
 import { ago, clock } from "../format.js";
 
 // Messages stored per minute, split by which end system received them.
-// Boomi = primary, BIMBA Ingest = failover, so a BIMBA Ingest bar means the primary was down.
+// Boomi = primary, BIMBA Ingest or the gateway's built-in BIMBA database = failover, so a BIMBA bar means the primary was down.
 export default function DeliveryChart({ data, summary }) {
   const th = useChartTheme();
   const rows = (data?.series ?? []).map((r) => ({ ...r, label: clock(r.minute).slice(0, 5) }));
@@ -25,7 +25,7 @@ export default function DeliveryChart({ data, summary }) {
           const lastAt = vias.map((v) => last[v]).filter(Boolean).sort().pop();
           return (
             <div key={sys} className="via-tile">
-              <div className="via-name">{sys === "boomi" ? "Boomi Event Streams (primary)" : "BIMBA Ingest (failover)"}</div>
+              <div className="via-name">{sys === "boomi" ? "Boomi Event Streams (primary)" : "BIMBA Ingest / Gateway (failover)"}</div>
               <div className="via-count">{count.toLocaleString()}</div>
               <div className="muted small">msgs last 5 min · last batch {ago(lastAt)}</div>
             </div>

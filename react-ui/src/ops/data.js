@@ -54,16 +54,6 @@ export function fmtNum(n, digits) {
 export const UNIT = { degC: "°C", m3: "m³", "m3/h": "m³/h" };
 export const unit = (u) => (u ? UNIT[u] ?? u : "");
 
-export function clamp01(v) {
-  return Math.max(0, Math.min(1, v));
-}
-
-export function frac(tag, v) {
-  const s = specOf(tag);
-  if (s.min == null || v == null) return null;
-  return clamp01((v - s.min) / (s.max - s.min));
-}
-
 /** good | warning | critical for a numeric value against its alarm band. */
 export function band(tag, v) {
   const s = specOf(tag);
@@ -98,99 +88,6 @@ export function useNow(ms) {
     return () => clearInterval(t);
   }, [ms]);
   return now;
-}
-
-export function reducedMotion() {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-}
-
-/**
- * Rolling per-tag history: seeded from /api/tags/<id>/history/ once per tag, then extended with
- * WebSocket values. Re-renders at most twice a second.
- */
-export function useTagSeries(tagIds, onValues, minutes = 15) {
-  const store = useRef(new Map()); // tagId -> [{t, v}]
-  const seeded = useRef(new Set());
-  const [, setTick] = useState(0);
-  const pending = useRef(false);
-  const win = useRef(minutes);
-  if (win.current !== minutes) {
-    // new window: drop what we have and seed again with the longer/shorter history
-    win.current = minutes;
-    store.current = new Map();
-    seeded.current = new Set();
-  }
-
-  const bump = useCallback(() => {
-    if (pending.current) return;
-    pending.current = true;
-    setTimeout(() => {
-      pending.current = false;
-      setTick((n) => n + 1);
-    }, 500);
-  }, []);
-
-  const key = tagIds.join(",");
-  useEffect(() => {
-    for (const id of tagIds) {
-      if (seeded.current.has(id)) continue;
-      seeded.current.add(id);
-      fetch(`/api/tags/${id}/history/?minutes=${minutes}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (!d) return;
-          const hist = d.points.filter((p) => p.num != null).map((p) => ({ t: Date.parse(p.time), v: p.num }));
-          const liveTail = store.current.get(id) ?? [];
-          const first = liveTail[0]?.t ?? Infinity;
-          store.current.set(id, [...hist.filter((p) => p.t < first), ...liveTail]);
-          bump();
-        })
-        .catch(() => seeded.current.delete(id));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, minutes, bump]);
-
-  useEffect(
-    () =>
-      onValues((items) => {
-        const cutoff = Date.now() - minutes * 60_000;
-        let hit = false;
-        for (const i of items) {
-          if (i.num == null || i.text != null) continue;
-          const arr = store.current.get(i.tagId) ?? [];
-          arr.push({ t: Date.parse(i.time), v: i.num });
-          while (arr.length && arr[0].t < cutoff) arr.shift();
-          if (arr.length > 1200) arr.splice(0, arr.length - 1200);
-          store.current.set(i.tagId, arr);
-          hit = true;
-        }
-        if (hit) bump();
-      }),
-    [onValues, minutes, bump]
-  );
-
-  return store.current;
-}
-
-/** Values stored per second over the last `seconds`, counted from the WebSocket feed. */
-export function useRate(onValues, seconds = 120) {
-  const buckets = useRef(new Map());
-  const [series, setSeries] = useState([]);
-  useEffect(() => onValues((items) => {
-    const s = Math.floor(Date.now() / 1000);
-    buckets.current.set(s, (buckets.current.get(s) ?? 0) + items.length);
-  }), [onValues]);
-  useEffect(() => {
-    const t = setInterval(() => {
-      const now = Math.floor(Date.now() / 1000);
-      const out = [];
-      for (let s = now - seconds; s < now; s++) out.push({ t: s * 1000, v: buckets.current.get(s) ?? 0 });
-      for (const k of buckets.current.keys()) if (k < now - seconds) buckets.current.delete(k);
-      setSeries(out);
-    }, 1000);
-    return () => clearInterval(t);
-  }, [seconds]);
-  return series;
 }
 
 /**
@@ -358,15 +255,15 @@ export function computeAlarms(p, machines) {
     }
     if (r.bufferedBatches > 0) out.push({ s: "warning", t: `Route ${r.name} buffering`, d: `${r.bufferedBatches} batches on disk` });
   }
-  const main = p?.delivery?.routes?.find((r) => r.name === "main");
+  const main = p?.delivery?.routes?.find((r) => (r.kind ?? r.name) === "main");
   const act = main?.destinations?.find((d) => d.name === main.activeDestination);
   if (act && act.role !== "primary") out.push({ s: "warning", t: "Running on failover", d: `${act.name} is carrying the data` });
 
-  // every device-driven machine BAD while expression tags (LINE-SIM) still update = Ignition trial expired
+  // every device-driven machine BAD while expression tags (LINE-SIM) still update = field network / devices unreachable
   const lost = machines.filter((m) => m.health === "critical" && m.kind !== "generic");
   const device = machines.filter((m) => m.kind !== "generic" && m.kind !== "line");
   if (lost.length && lost.length === device.length && machines.some((m) => m.kind === "line" && m.health === "good")) {
-    out.push({ s: "critical", t: "All device drivers BAD", d: "Ignition trial expired? Gateway → Status → Overview → Reset Trial" });
+    out.push({ s: "critical", t: "All device drivers BAD", d: "The gateway cannot reach any field device. Check the device network and BIMBA Gateway → Devices." });
   }
   for (const m of machines) out.push(...machineAlarms(m));
   return out;

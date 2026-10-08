@@ -1,10 +1,10 @@
 name: bimba
 
-# SCADA (Ignition + BIMBA IT/OT Agent module)  --Event Streams REST-->  Boomi Event Streams (primary)
+# BIMBA Gateway (our own SCADA edge server)  --Event Streams REST-->  Boomi Event Streams (primary)
 #   --> Boomi listener process | --REST/MQTT--> BIMBA Ingest (Django, failover)
 #   --> shared PostgreSQL  --> BIMBA (REST + WS, Django)  --> BIMBA live UI
 #
-#   http://localhost:8088   Ignition gateway (admin / password)
+#   http://localhost:8090   BIMBA Gateway console (Django superuser), https://localhost:8443 for site agents
 #   http://localhost:3080   BIMBA live UI
 #   http://localhost:8000   BIMBA REST + WS / Django admin (admin / admin)
 
@@ -16,8 +16,9 @@ x-django-env: &django-env                 # shared by django, django-mqtt, djang
   DB_USER: ${BIMBA_DB_USER:?set BIMBA_DB_USER in .env}
   DB_PASSWORD: ${BIMBA_DB_PASSWORD:?set BIMBA_DB_PASSWORD in .env}
   DB_SCHEMA: ${BIMBA_DB_SCHEMA:-bimba}
+  GATEWAY_DB_SCHEMA: ${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}   # migrated too (migrate_gateway_schema)
   INGEST_API_KEY: dev-ingest-key
-  PLUGIN_STATUS_URL: http://ignition:8088/system/bimba-status
+  PLUGIN_STATUS_URL: http://gateway:8090/system/bimba-status
   MQTT_HOST: mqtt
   MQTT_TOPIC: bimba/v1/+/django
   DJANGO_ADMIN_USER: admin
@@ -38,25 +39,41 @@ services:
     ports: ["4840:4840"]
     restart: unless-stopped
 
-  # ------------------------------------------------------------------ SCADA + our plugin
-  ignition:
-    image: inductiveautomation/ignition:8.1.55
-    hostname: ignition
+  # ------------------------------------------------------------------ our SCADA edge server
+  gateway:                              # BIMBA Gateway: reads Modbus / OPC UA, delivers to Boomi / BIMBA Ingest / Kafka,
+    build: ./bimba-gateway              # registers BIMBA Site Agents. Replaces Ignition + the BIMBA IT/OT Agent module.
+    hostname: bimba-gateway
     environment:
-      ACCEPT_IGNITION_EULA: "Y"
-      GATEWAY_ADMIN_USERNAME: admin
-      GATEWAY_ADMIN_PASSWORD: password
-      IGNITION_EDITION: standard
-      TZ: UTC
-      # config.json "token": "${BOOMI_ES_PRODUCE_TOKEN}" -> produce token from .env (falls back to the consume token)
       BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-${BOOMI_ES_CONSUME_TOKEN:-}}
-    # unsigned POC module -> gateway must allow unsigned modules
-    command: ["-n", "bimba-gw", "-m", "1536", "--", "wrapper.java.additional.10=-Dignition.allowunsignedmodules=true"]
-    ports: ["8088:8088"]
+      BIMBA_DB_HOST: ${BIMBA_DB_HOST:-}
+      BIMBA_DB_PORT: ${BIMBA_DB_PORT:-6433}
+      BIMBA_DB_NAME: ${BIMBA_DB_NAME:-bimba_chromalab}
+      BIMBA_DB_USER: ${BIMBA_DB_USER:-}
+      BIMBA_DB_PASSWORD: ${BIMBA_DB_PASSWORD:-}
+      BIMBA_DB_SCHEMA: ${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}   # the gateway's own schema (Django/Boomi: BIMBA_DB_SCHEMA)
+      BIMBA_TLS_NAMES: ${BIMBA_TLS_NAMES:-}   # extra DNS names / IPs for the self-signed HTTPS certificate
+      # production: the customer's HTTPS certificate (PEM cert + key, or a PFX) instead of the self-signed one;
+      # mount the files, e.g. ./gateway-tls:/tls:ro, and set BIMBA_TLS_CERT=/tls/gateway.crt BIMBA_TLS_KEY=/tls/gateway.key
+      BIMBA_TLS_CERT: ${BIMBA_TLS_CERT:-}
+      BIMBA_TLS_KEY: ${BIMBA_TLS_KEY:-}
+      BIMBA_TLS_PFX: ${BIMBA_TLS_PFX:-}
+      BIMBA_TLS_PFX_PASSWORD: ${BIMBA_TLS_PFX_PASSWORD:-}
+      BIMBA_SECRET_KEY: ${BIMBA_SECRET_KEY:-} # encrypts destination secrets in the database; empty = key in /data/secret.key
+      # "Forgot password?" e-mails. Without BIMBA_SMTP_HOST the reset link is written to the gateway log instead.
+      BIMBA_PUBLIC_URL: ${BIMBA_PUBLIC_URL:-http://localhost:8090}   # console address used in e-mailed links
+      BIMBA_SMTP_HOST: ${BIMBA_SMTP_HOST:-}
+      BIMBA_SMTP_PORT: ${BIMBA_SMTP_PORT:-587}
+      BIMBA_SMTP_USER: ${BIMBA_SMTP_USER:-}
+      BIMBA_SMTP_PASSWORD: ${BIMBA_SMTP_PASSWORD:-}
+      BIMBA_SMTP_AUTH: ${BIMBA_SMTP_AUTH:-true}
+      BIMBA_SMTP_STARTTLS: ${BIMBA_SMTP_STARTTLS:-true}
+      BIMBA_SMTP_SSL: ${BIMBA_SMTP_SSL:-false}
+      BIMBA_MAIL_FROM: ${BIMBA_MAIL_FROM:-}
     volumes:
-      - ignition-data:/usr/local/bin/ignition/data
-      - ./ignition/bimba:/usr/local/bin/ignition/data/bimba            # plugin config + disk buffer
-      - ./ignition-module/build/modl/BIMBA-IT-OT-Agent.modl:/usr/local/bin/ignition/user-lib/modules/BIMBA-IT-OT-Agent.modl:ro
+      - ./ignition/bimba:/config            # config.json, demo-tags.json (tag tree), console-sources.json (devices)
+      - gateway-data:/data                  # disk buffer, HTTPS key store, secret.key, saved destination list
+      - ./site-agent/dist:/installers:ro    # BIMBA-Site-Agent-Setup.exe for "Download installer" (scripts/build-site-agent.ps1)
+    ports: ["8090:8090", "8443:8443"]
     depends_on: [plc-sim, opcua-sim]
     restart: unless-stopped
 
@@ -105,6 +122,8 @@ services:
   ui:                                   # BIMBA live UI (React + nginx, proxies /api and /ws to BIMBA REST + WS)
     build: ./react-ui
     ports: ["3080:80"]
+    volumes:
+      - ./site-agent/dist:/usr/share/nginx/downloads:ro   # BIMBA-Site-Agent-Setup.exe (scripts/build-site-agent.ps1)
     depends_on: [django]
     restart: unless-stopped
 
@@ -161,8 +180,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  gateway-data:
   kafka-data:
   es-spool:
-  ignition-data:
   mqtt-data:
   boomi-data:

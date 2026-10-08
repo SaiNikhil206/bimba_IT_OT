@@ -39,7 +39,7 @@ export default function App() {
           <span className="logo" aria-hidden="true" />
           <div>
             <h1>BIMBA live UI</h1>
-            <p className="sub">Ignition SCADA → BIMBA IT/OT Agent → Boomi Event Streams / BIMBA Ingest → shared PostgreSQL</p>
+            <p className="sub">BIMBA Gateway → Boomi Event Streams / BIMBA Ingest → shared PostgreSQL</p>
           </div>
         </div>
         <div className="kpis">

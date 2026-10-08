@@ -16,7 +16,7 @@ from .ingest import ingest_batch
 from .models import IngestBatch, Machine, Measurement, Tag
 
 log = logging.getLogger("telemetry")
-VIAS = ["boomi-es", "bimba-rest", "boomi-rest", "boomi-mqtt", "bimba-mqtt"]
+VIAS = ["boomi-es", "bimba-rest", "boomi-rest", "boomi-mqtt", "bimba-mqtt", "bimba-gateway"]
 
 
 def _authorized(request):
@@ -145,7 +145,7 @@ def summary(request):
 
 @require_GET
 def plugin_status(request):
-    """Proxies the Ignition module's status page (destination health, buffer size)."""
+    """Proxies the BIMBA Gateway's status page (destination health, buffer size)."""
     try:
         with urllib.request.urlopen(settings.PLUGIN_STATUS_URL, timeout=3) as resp:
             return JsonResponse({"reachable": True, **json.loads(resp.read())})

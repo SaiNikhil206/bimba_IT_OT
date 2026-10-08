@@ -3,7 +3,7 @@ import { api, clone, same } from "./api.js";
 import { modbusArea, validModbus } from "./model.js";
 import { ActionBar, Input, Select, Seg } from "./ui.jsx";
 
-export const gatewayUrl = () => `${window.location.protocol}//${window.location.hostname}:8088/web/config/`;
+export const gatewayUrl = () => `${window.location.protocol}//${window.location.hostname}:8090/`;
 
 export default function Modbus({ config, draft, setDraft, reload }) {
   const devices = useMemo(() => Object.keys(draft.sources.modbus ?? {}).sort(), [draft.sources.modbus]);

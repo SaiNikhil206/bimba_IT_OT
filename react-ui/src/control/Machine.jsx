@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Art } from "./Assets.jsx";
 import { machineAlarms } from "./alarms.js";
 import {
@@ -246,7 +246,7 @@ function StateChip({ t }) {
 }
 
 const CANONICAL = ["plantId", "machineId", "timestamp", "tagName", "tagValue", "unit", "quality", "edge.seq"];
-const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT" };
+const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT", database: "BIMBA database" };
 
 function targetName(d) {
   if (/\/api\/ingest\/?$/.test(d.endpoint ?? "")) return "BIMBA Ingest";

@@ -7,7 +7,7 @@ and stores each message in PostgreSQL by calling the same SQL function BIMBA Ing
 BIMBA Ingest and retries Event Streams every `retryAfterSeconds` (failback).
 
 ```
-Ignition BIMBA IT/OT Agent
+BIMBA Gateway
    │  POST https://usa-east-web.eventstreams.boomi.com/rest/singlemsg/<account>/<env>/BIMBA
    │  Authorization: Bearer <environment token>   x-msg-props-batchId / plantId / edgeId / count
    │  body: <batch JSON>
@@ -44,10 +44,11 @@ stopped. Other systems can subscribe to the same topic without touching the plan
    With the single-message URL and `esMode: "message"`, every tag value is a separate request, so keep
    `batch` mode unless you really need per-tag messages (rate limit: 60,000 requests / 5 min per IP).
 
-## 2. Point the plugin at the topic
-Run `.\scripts\set-eventstreams.ps1`. It asks for the URL (Enter keeps the current one)
-and the token (hidden input), then writes `ignition/bimba/config.json`, which the plugin
-reloads within about 10 s. Keep the token out of chat, email and git. The resulting entry:
+## 2. Point the gateway at the topic
+In the BIMBA Gateway console (http://localhost:8090) open **Destinations → boomi-eventstreams**,
+paste the topic's REST URL and the environment token (produce), and save. Destinations live in the
+gateway database (secrets encrypted), not in `config.json`. Keep the token out of chat, email and git.
+The destination's settings:
 
 ```json
 {

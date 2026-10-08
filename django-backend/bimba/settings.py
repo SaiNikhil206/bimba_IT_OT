@@ -49,18 +49,22 @@ TEMPLATES = [{
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        # postgresql + every statement pinned to DB_SCHEMA (safe behind the transaction-mode pooler, see bimba/pgbackend)
+        "ENGINE": "bimba.pgbackend",
         "HOST": env("DB_HOST", "localhost"),
         "PORT": env("DB_PORT", "5432"),
         "NAME": env("DB_NAME", "bimba"),
         "USER": env("DB_USER", "bimba"),
         "PASSWORD": env("DB_PASSWORD", "bimba"),
         "CONN_MAX_AGE": 60,
+        "DISABLE_SERVER_SIDE_CURSORS": True,
     }
 }
 # All BIMBA objects (including Django's own tables) live in this schema only, so a shared
-# database's other tables are never read or modified. See telemetry.apps and ensure_schema.
+# database's other tables are never read or modified. See bimba/pgbackend and ensure_schema.
 DB_SCHEMA = env("DB_SCHEMA", "public")
+# The BIMBA Gateway keeps its own tables in this schema (same migrations); migrate_gateway_schema keeps it current.
+GATEWAY_DB_SCHEMA = env("GATEWAY_DB_SCHEMA", "")
 
 # Single-process POC: in-memory layer. Use channels_redis for multiple workers.
 CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
@@ -74,7 +78,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # ---- BIMBA
 INGEST_API_KEY = env("INGEST_API_KEY", "dev-ingest-key")
-PLUGIN_STATUS_URL = env("PLUGIN_STATUS_URL", "http://ignition:8088/system/bimba-status")
+PLUGIN_STATUS_URL = env("PLUGIN_STATUS_URL", "http://gateway:8090/system/bimba-status")
 MQTT_HOST = env("MQTT_HOST", "mqtt")
 MQTT_PORT = int(env("MQTT_PORT", "1883"))
 MQTT_TOPIC = env("MQTT_TOPIC", "bimba/v1/+/django")

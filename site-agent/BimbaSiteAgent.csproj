@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- BIMBA Site Agent: one .exe that is the setup wizard, the silent installer and the Windows service.
+       .NET Framework 4.8 is part of Windows 10/11 and Server 2016+, so SCADA machines need no extra runtime.
+       Build: ..\scripts\build-site-agent.ps1  ->  dist\BIMBA-Site-Agent-Setup.exe -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <AssemblyName>BIMBA-Site-Agent-Setup</AssemblyName>
+    <RootNamespace>Bimba.SiteAgent</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.3.0</Version>
+    <Product>BIMBA Site Agent</Product>
+    <Company>BIMBA</Company>
+    <Description>Registers this machine with its organization on the BIMBA Gateway</Description>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Management" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.ServiceProcess" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+</Project>

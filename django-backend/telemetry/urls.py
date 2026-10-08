@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import console, views
+from . import agents, console, views
 
 urlpatterns = [
     path("ingest/", views.ingest),
@@ -18,4 +18,14 @@ urlpatterns = [
     path("console/eventstreams/", console.save_eventstreams),
     path("console/test/<str:kind>/", console.test),
     path("console/kafka-tail/", console.kafka_tail),
+    # Site agents (organization sign-in; each organization sees only its own machines)
+    path("auth/me/", agents.me),
+    path("auth/login/", agents.login),
+    path("auth/logout/", agents.logout),
+    path("agents/", agents.agents),
+    path("agents/tokens/", agents.tokens),
+    path("agents/tokens/<int:token_id>/revoke/", agents.token_revoke),
+    path("agents/<str:agent_id>/", agents.agent_detail),
+    path("agents/<str:agent_id>/revoke/", agents.agent_revoke),
+    path("agents/<str:agent_id>/remove/", agents.agent_remove),
 ]

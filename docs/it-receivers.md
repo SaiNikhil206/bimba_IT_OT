@@ -5,9 +5,9 @@ BIMBA IT/OT Agent can **fan out** a copy of every batch to any number of extra
 receivers. Give a destination `"role": "mirror"`:
 
 ```
-                         ┌─ route "main":  boomi-eventstreams ──(down)──► bimba-ingest (primary → failover)
-Ignition ─► batcher ─────┼─ route "kafka": kafka                                     (mirror)
-                         └─ route "it-webhook": REST endpoint                         (mirror)
+                              ┌─ route "main":  boomi-eventstreams ──(down)──► bimba-ingest (primary → failover)
+BIMBA Gateway ─► batcher ─────┼─ route "kafka": kafka                                     (mirror)
+                              └─ route "it-webhook": REST endpoint                         (mirror)
 ```
 
 * Each mirror is an **independent route** with its own sender thread, retry/failback

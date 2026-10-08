@@ -67,7 +67,7 @@ export default function EventStreams({ config, draft, setDraft, reload, dirty, p
                        ? "The gateway resolves this variable from .env when the plugin reloads."
                        : config.eventstreams.tokenEnvSet
                          ? "Reference to .env. The variable is set."
-                         : "Reference to .env. The variable is not set: add it to .env and run docker compose up -d ignition django."
+                         : "Reference to .env. The variable is not set: add it to .env and run docker compose up -d gateway django."
                    } />
             <Select label="Messages" obj={es} k="esMode" onChange={set}
                     options={[["batch", "One message per batch"], ["message", "One message per tag value"]]} />

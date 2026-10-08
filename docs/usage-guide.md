@@ -1,12 +1,12 @@
-# BIMBA IT/OT Agent: usage guide
+# BIMBA: usage guide
 
 How to run, operate, change and troubleshoot the POC day to day. For the background on each
 part, see the other files in `docs/`.
 
 ```
-Ignition + BIMBA IT/OT Agent ──► Boomi Event Streams (primary) ──► Boomi ES listener ──┐
-                             └─► BIMBA Ingest /api/ingest/ (failover) ──────────────────┼─► Shared PostgreSQL DB (schema bimba) ─► BIMBA (REST + WS) ─► BIMBA live UI :3080
-                             └─► Kafka (mirror copy, independent)                        │
+BIMBA Gateway ──► Boomi Event Streams (primary) ──► Boomi ES listener ──┐
+              └─► BIMBA Ingest /api/ingest/ (failover) ──────────────────┼─► Shared PostgreSQL DB (schema bimba) ─► BIMBA (REST + WS) ─► BIMBA live UI :3080
+              └─► Kafka (mirror copy, independent)                        │
 ```
 
 ---
@@ -25,35 +25,27 @@ Prerequisite: Docker Desktop running. Run all commands from the project root in 
    | `BOOMI_ES_CONSUME_URL` / `BOOMI_ES_CONSUME_TOKEN` | Only needed by the Django consumer (`django-es-consumer`) |
    | `BOOMI_INSTALL_TOKEN`, `BOOMI_ATOMNAME`, `BOOMI_ENVIRONMENTID` | Only needed for a local Docker Atom (`--profile boomi`) |
 
-2. **Build the plugin** (`.modl`). The build runs in a JDK container, so no local Java is needed:
-   ```bash
-   .\scripts\build-module.ps1
-   ```
-
-3. **Start the stack**:
+2. **Start the stack** (the gateway builds in a JDK container, so no local Java is needed):
    ```bash
    docker compose --profile kafka up -d --build
    ```
 
-4. **Stop the Django ES consumer.** It shares subscription `BIMBA-SCADA` with the deployed Boomi
+3. **Stop the Django ES consumer.** It shares subscription `BIMBA-SCADA` with the deployed Boomi
    listener, so only one of the two may run (see §5):
    ```bash
    docker compose stop django-es-consumer
    ```
 
-5. **On a fresh Ignition volume only**, open http://localhost:8088 (`admin` / `password`) and create:
-   * **Config → OPC UA → Device Connections → Modbus TCP**: name `PLC`, host `plc-sim`, port `5020`
-   * *(optional)* **Config → OPC Client → OPC Connections → OPC UA**: name `METER`,
-     endpoint `opc.tcp://opcua-sim:4840/scada/`, security **None**. Until you create it,
-     `SUBSTN-M1` shows quality BAD.
+Device connections (Modbus `PLC` → `plc-sim:5020`, OPC UA `METER` → `opc.tcp://opcua-sim:4840/scada/`)
+come from `ignition/bimba/console-sources.json`; no manual setup step.
 
 ## 2. Everyday use
 
 | URL | Use it for |
 |---|---|
 | http://localhost:3080 | **Live UI**: machines, tag values, trends, which end system stored each batch, plugin health |
-| http://localhost:8088 | Ignition gateway (`admin` / `password`) |
-| http://localhost:8088/system/bimba-status | Plugin status JSON: routes, active destination, last errors, buffer size |
+| http://localhost:8090 | BIMBA Gateway console (`admin` / `admin`) |
+| http://localhost:8090/system/bimba-status | Gateway status JSON: routes, active destination, last errors, buffer size |
 | http://localhost:8000/admin | Django admin (`admin` / `admin`): browse the stored tables |
 | http://localhost:8085 | Kafka UI: topic `bimba.PLANT01.telemetry` |
 
@@ -64,9 +56,9 @@ docker compose --profile kafka up -d
 ```bash
 docker compose --profile kafka stop
 ```
-Logs for one service (`ignition`, `django`, `ui`, `kafka` …):
+Logs for one service (`gateway`, `django`, `ui`, `kafka` …):
 ```bash
-docker compose logs -f --tail 100 ignition
+docker compose logs -f --tail 100 gateway
 ```
 
 ### Reading the BIMBA live UI
@@ -76,7 +68,7 @@ docker compose logs -f --tail 100 ignition
 * **Received by end system**: messages per minute, split by the path that stored them:
   `boomi-es` means the primary path is working, and `bimba-rest` means the plugin is in failover.
 * **Incoming batches**: the most recent batches, with seq range, duplicates and lag.
-* **Ignition plugin**: the state of each destination (Up / Down / Idle) and its last error,
+* **Gateway**: the state of each destination (Up / Down / Idle) and its last error,
   and whether the plugin is buffering to disk.
 
 **Healthy state:** new batches arrive as `boomi-es`, the `boomi-eventstreams` destination is **Up**,
@@ -89,7 +81,7 @@ Event Streams error (for example 401, which means a bad token).
 1. Edit `BOOMI_ES_PRODUCE_TOKEN` in `.env`.
 2. Recreate the gateway so it picks up the new value:
    ```bash
-   docker compose --profile kafka up -d ignition
+   docker compose --profile kafka up -d gateway
    ```
 3. Within about 15 s, `boomi-eventstreams` should show **Up**, and new batches arrive as `boomi-es`.
 
@@ -111,9 +103,9 @@ The plugin **hot-reloads** this file within about 10 s, so no restart is needed.
 Only one `primary` and one `failover` should be enabled at a time. You can enable any number of mirrors.
 
 ### Add machines or tags
-Create tags in Ignition under `[default]BIMBA/<machineId>/<tagName>`, in the Designer or through a
-tag import. The plugin re-browses every `rediscoverSeconds` (30 s), and the new machine appears in
-the UI automatically. Values are sent on change.
+Add them in BIMBA Operations → Settings (saved to `ignition/bimba/demo-tags.json`, Ignition
+tag-export layout under `[default]BIMBA/<machineId>/<tagName>`). The gateway picks up the change
+and the new machine appears in the UI automatically. Values are sent on change.
 
 ### Send a copy to Kafka or another IT system
 Kafka is already enabled as a mirror. For a webhook, Confluent, MSK, Event Hubs and so on, set
@@ -129,7 +121,7 @@ Then, in `config.json`, disable `bimba-ingest` and enable `bimba-ingest-mqtt`.
 ### Rebuild after code changes
 | Changed | Command |
 |---|---|
-| Plugin (`ignition-module/`) | `.\scripts\build-module.ps1`, then `docker compose restart ignition` |
+| BIMBA Gateway (`bimba-gateway/`) | `docker compose up -d --build gateway` |
 | BIMBA Ingest + REST/WS (`django-backend/`) | `docker compose up -d --build django` |
 | BIMBA live UI (`react-ui/`) | `docker compose up -d --build ui` |
 
@@ -179,17 +171,14 @@ Stop it afterwards, as in §1 step 4. Both consumers store rows as `via = 'boomi
 | `docker compose up` fails with "set BIMBA_DB_HOST" | Fill `BIMBA_DB_*` in `.env` (`.\scripts\set-database.ps1`) |
 | Batches arrive as `bimba-rest`, not `boomi-es` | Plugin panel or `/system/bimba-status`: a **401** means a bad or expired token (§3). Timeouts point to network or proxy problems. |
 | `boomi-es` batches stop, plugin says ES is Up | The Boomi listener isn't running (check Process Reporting in Boomi), or `django-es-consumer` is competing for the subscription |
-| UI shows "Unreachable" for the plugin | `docker compose ps ignition`, then `docker compose logs ignition`. The gateway takes 1–2 minutes to start. |
-| Plugin buffer keeps growing | All destinations on the route are down. Data is safe on disk (`ignition/bimba/buffer/`) and replays in order after recovery. |
-| `SUBSTN-M1` tags are BAD | The OPC UA connection `METER` is missing (§1 step 5) |
+| UI shows "Unreachable" for the gateway | `docker compose ps gateway`, then `docker compose logs gateway`. |
+| Gateway buffer keeps growing | All destinations on the route are down. Data is safe on disk (volume `gateway-data`) and replays in order after recovery. |
+| `SUBSTN-M1` tags are BAD | The OPC UA device `METER` is missing from `console-sources.json`, or `opcua-sim` isn't running |
 | `PUMP-P1` / `TANK-T1` are BAD | The Modbus device `PLC` is missing, or `plc-sim` isn't running |
 | UI not loading on :3080 | Port 3000 is used by another app, so the UI is deliberately on **3080**. Check `docker compose ps ui`. |
 | Duplicates counted in batches | This is expected after a retry or replay: delivery is at-least-once, and `bimba_ingest()` de-duplicates on `messageId` |
 
-Plugin log names in the gateway log: `BIMBA`, `BIMBA.Collector`, `BIMBA.Delivery`, `BIMBA.Buffer`.
-
 ## 7. POC limits (read before any production use)
-* The module is unsigned, which requires `allowunsignedmodules`. Its config is a JSON file, not a gateway settings page.
 * The BIMBA REST read API and WebSocket have no authentication. Traffic inside Docker is plain HTTP.
 * The shared DB is PostgreSQL 10, so Django is pinned to the end-of-life 4.0 release.
 * There is no retention or partitioning on `bimba_measurement`.

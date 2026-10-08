@@ -186,7 +186,7 @@ export function EventStreams({ config, draft, setDraft, reload, dirty, plugin })
                      ? "The gateway resolves this variable from .env when the plugin reloads."
                      : config.eventstreams.tokenEnvSet
                        ? "Reference to .env. The variable is set."
-                       : "Reference to .env. The variable is not set: add it to .env and run docker compose up -d ignition django."} />
+                       : "Reference to .env. The variable is not set: add it to .env and run docker compose up -d gateway django."} />
             <Select label="Messages" obj={es} k="esMode" onChange={set} options={[["batch", "One message per batch"], ["message", "One message per tag value"]]} />
             <Select label="Produce API" obj={es} k="esApi" onChange={set} options={[["auto", "Detect from URL"], ["single", "Single message"], ["multi", "Multi message"]]} />
             <Input label="Timeout (ms)" obj={es} k="timeoutMs" onChange={set} type="number" mono />
@@ -213,7 +213,7 @@ export function EventStreams({ config, draft, setDraft, reload, dirty, plugin })
 }
 
 function FailoverState({ plugin }) {
-  const main = plugin?.delivery?.routes?.find((r) => r.name === "main");
+  const main = plugin?.delivery?.routes?.find((r) => (r.kind ?? r.name) === "main");
   const list = main?.destinations ?? [];
   if (!list.length) return <p className="muted">Plugin status not reachable.</p>;
   return (

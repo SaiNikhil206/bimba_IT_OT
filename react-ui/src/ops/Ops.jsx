@@ -6,6 +6,7 @@ import { MachineDetail, MachineList } from "./Machines.jsx";
 import Flow from "./Flow.jsx";
 import Alarms from "./Alarms.jsx";
 import Settings from "./Settings.jsx";
+import Agents from "./Agents.jsx";
 import { BASE, to } from "./paths.js";
 import "./ops.css";
 
@@ -16,6 +17,7 @@ import "./ops.css";
 //   /operations/flow                  is data getting through?
 //   /operations/alarms                what needs attention?
 //   /operations/settings[/<kind>[/<item>]]  field connections and destinations
+//   /operations/agents[/install]      site agents of the signed-in organization (private per organization)
 
 
 const NAV = [
@@ -23,6 +25,7 @@ const NAV = [
   { key: "machines", label: "Machines", icon: "▦" },
   { key: "flow", label: "Data flow", icon: "⇢" },
   { key: "alarms", label: "Alarms", icon: "△" },
+  { key: "agents", label: "Site agents", icon: "⌂" },
   { key: "settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -119,7 +122,7 @@ export default function Ops() {
   const overall = crit ? "critical" : alarms.length ? "warning" : "good";
 
   const page = NAV.some((n) => n.key === route.page) ? route.page : "overview";
-  const title = { overview: "Overview", machines: route.a ?? "Machines", flow: "Data flow", alarms: "Alarms", settings: "Settings" }[page];
+  const title = { overview: "Overview", machines: route.a ?? "Machines", flow: "Data flow", alarms: "Alarms", agents: "Site agents", settings: "Settings" }[page];
   useEffect(() => {
     document.title = `${title} · BIMBA Operations`;
   }, [title]);
@@ -166,6 +169,7 @@ export default function Ops() {
           {page === "flow" && <Flow {...ctx} />}
           {page === "alarms" && <Alarms {...ctx} />}
           {page === "settings" && <Settings kind={route.a} item={route.b} {...ctx} />}
+          {page === "agents" && <Agents tab={route.a} {...ctx} />}
         </main>
       </div>
     </div>

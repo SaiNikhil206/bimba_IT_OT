@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { band, fmtNum, good, isBool, isNum, machineAlarms, onOf, segments, since, specOf, unit, useMachineHistory, useNow, useWidth } from "./data.js";
+import { useState } from "react";
+import { band, fmtNum, good, isBool, isNum, machineAlarms, onOf, segments, specOf, unit, useMachineHistory, useNow, useWidth } from "./data.js";
 import { kpis } from "./kpis.js";
 import { KIND, headline, health, readingText, runState, targetName, ago } from "./model.js";
 import Messages from "./Messages.jsx";
@@ -10,7 +10,7 @@ import { Card, Empty, LineChart, PageHeader, Seg, Stat, Status, Tabs } from "./u
 
 const STATE_TAGS = new Set(["running", "tripped", "breaker_closed", "state"]);
 const isState = (t) => STATE_TAGS.has(t.tag) || isBool(t) || t.text != null;
-const PROTO = { modbus: "Modbus TCP", opcua: "OPC UA", expression: "Gateway expression", other: "Ignition tag" };
+const PROTO = { modbus: "Modbus TCP", opcua: "OPC UA", expression: "Gateway expression", other: "Gateway tag" };
 
 export function MachineList({ machines, link }) {
   return (
@@ -224,13 +224,13 @@ function Details({ m, cfg, points, src, plugin, link }) {
             <div><dt>Protocol</dt><dd>{PROTO[src.kind] ?? PROTO.other}</dd></div>
             <div><dt>Device</dt><dd>{src.device ?? "–"}</dd></div>
             <div><dt>Address</dt><dd className="mono">{src.address ?? "–"}</dd></div>
-            <div><dt>Ignition folder</dt><dd className="mono">[default]BIMBA/{m.machineId}</dd></div>
+            <div><dt>Tag folder</dt><dd className="mono">{m.machineId}/</dd></div>
           </dl>
         </Card>
         <Card title="Data path">
           <ol className="op-path">
             <li><b>{PROTO[src.kind] ?? "Device"}</b><span>{src.device ? `${src.device} · ${src.address}` : "computed in the gateway"}</span></li>
-            <li><b>Edge gateway</b><span>{plugin?.edgeId ?? "Ignition"} · BIMBA IT/OT Agent {plugin?.version ?? ""}</span></li>
+            <li><b>Edge gateway</b><span>{plugin?.edgeId ?? "BIMBA Gateway"} · {plugin?.module ?? "BIMBA Gateway"} {plugin?.version ?? ""}</span></li>
             {dests.map((d) => <li key={d.name}><b>{targetName(d)}</b><span>{d.role === "mirror" ? "copy of every batch" : d.role}</span></li>)}
             <li><b>Database</b><span>PostgreSQL · stored via {vias.map((v) => (v === "boomi-es" ? "Boomi Event Streams" : v)).join(", ") || "–"}</span></li>
           </ol>

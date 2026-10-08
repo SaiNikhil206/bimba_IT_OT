@@ -8,6 +8,7 @@ export const VIA = {
   "boomi-rest": "Boomi · REST",
   "boomi-mqtt": "Boomi · MQTT",
   "bimba-mqtt": "BIMBA Ingest · MQTT",
+  "bimba-gateway": "BIMBA Gateway · direct",
 };
 
 export const machinePath = (id) => `/control-room/machine/${encodeURIComponent(id)}`;

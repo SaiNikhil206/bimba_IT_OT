@@ -1,7 +1,7 @@
 # BIMBA IT/OT Agent: POC
 
-An **installable plugin for the SCADA system** (an Ignition gateway module) that streams
-tag data to two end systems: **Boomi Event Streams (primary)**, consumed by a Boomi
+**BIMBA Gateway**, our own SCADA edge server (Java, [docs/bimba-gateway.md](docs/bimba-gateway.md)), reads
+Modbus TCP and OPC UA devices and streams tag data to two end systems: **Boomi Event Streams (primary)**, consumed by a Boomi
 process, and **BIMBA Ingest (failover, Python Django)**, over REST or MQTT. It can also **copy every
 batch to Kafka or any other IT receiver** (webhook, MQTT, Confluent/MSK/Event Hubs),
 each as an independent route with its own disk buffer. See [docs/it-receivers.md](docs/it-receivers.md). Both end systems store it in the **shared PostgreSQL DB** (schema `bimba`), and the
@@ -9,11 +9,9 @@ each as an independent route with its own disk buffer. See [docs/it-receivers.md
 
 ```
 Modbus SCADA sim ─┐
-OPC UA meter sim ─┴─► Ignition tags [default]BIMBA/<machine>/<tag>
-                                │ on change
-                                ▼
-                    BIMBA IT/OT Agent (.modl)
+OPC UA meter sim ─┴─► BIMBA Gateway :8090 / :8443   (tag tree <machine>/<tag>, poll + send on change)
                     canonical JSON · batches · failover + failback · disk store-and-forward
+                    ◄── BIMBA Site Agents (Windows installer on any SCADA PC, per organization)
                      │                        │                          │
              primary │ HTTPS + env token      │ failover: REST / MQTT    │ mirror route
                      ▼                        ▼                          ▼
@@ -37,9 +35,6 @@ OPC UA meter sim ─┴─► Ignition tags [default]BIMBA/<machine>/<tag>
 Prerequisite: Docker Desktop. For day-to-day operation, see the **[usage guide](docs/usage-guide.md)**.
 
 ```bash
-.\scripts\build-module.ps1
-```
-```bash
 docker compose --profile kafka up -d kafka kafka-ui
 ```
 ```bash
@@ -50,42 +45,45 @@ docker compose up -d --build
 |---|---|
 | http://localhost:3080 | **BIMBA live UI** |
 | http://localhost:3080/console | **OT/IT Bridge Console**: devices, Modbus/OPC UA tag mapping, Kafka + Event Streams destinations (saved to the plugin config), real connection tests, live data flow. No login (POC) |
-| http://localhost:8088 | Ignition gateway (`admin` / `password`) |
-| http://localhost:8088/system/bimba-status | Plugin status (JSON) |
+| http://localhost:8090 | **BIMBA Gateway** console: sign-in, overview, site agents, users, roles, audit log, profile (POC `admin` / `admin`, a Django superuser; change it) |
+| http://localhost:8090/system/bimba-status | Gateway status (JSON) |
+| https://localhost:8443 | Gateway HTTPS (self-signed, fingerprint on the console) for site agents |
+| http://localhost:3080/operations/agents | **Site agents**: machines that installed the BIMBA Site Agent, per organization (sign-in). See [docs/site-agents.md](docs/site-agents.md) |
 | http://localhost:8000/admin | Django admin (`admin` / `admin`) |
 | http://localhost:8000/api/ | BIMBA REST API, WebSocket `/ws/live/` (`machines/`, `tags/<id>/history/`, `deliveries/`, `summary/`) |
 | `103.120.176.105:6433` | Shared PostgreSQL `bimba_chromalab`, schema `bimba` (see [docs/database.md](docs/database.md)); set in `.env` with `scripts/set-database.ps1` |
 | `localhost:1883` | MQTT broker, only for the MQTT transport (`docker compose --profile mqtt up -d`) |
 | http://localhost:8085 | Kafka UI (`docker compose --profile kafka up -d`); bootstrap `localhost:29092` |
 
-One-time step on a fresh Ignition volume: create the Modbus device `PLC` → `plc-sim:5020`
-(and optionally the OPC UA connection `METER`). See [docs/ignition-setup.md](docs/ignition-setup.md).
+Devices and tags come from `ignition/bimba/console-sources.json` and `demo-tags.json` (edit them in
+BIMBA Operations → Settings); no extra setup step. The folder keeps its old name for now.
 
 Boomi Event Streams: create a topic + environment token, paste the topic's REST URL and
 token into `ignition/bimba/config.json` (destination `boomi-eventstreams`), start the Atom
 (`.env` + `docker compose --profile boomi up -d`) and build the listener process, following
-[docs/boomi-setup.md](docs/boomi-setup.md). Until Event Streams accepts data, the plugin fails
+[docs/boomi-setup.md](docs/boomi-setup.md). Until Event Streams accepts data, the gateway fails
 over to BIMBA Ingest automatically.
 
 ## Components
 
 | Folder | What it is |
 |---|---|
-| `ignition-module/` | **BIMBA IT/OT Agent**, the SCADA plugin (Java, Ignition SDK 8.1). Subscribes to tags, builds canonical JSON, batches, delivers to Boomi Event Streams / REST / MQTT with primary→failover, disk buffer, `/system/bimba-status` |
+| `bimba-gateway/` | **BIMBA Gateway**, our own SCADA edge server (Java 21 + Spring Boot 4.1, console in React + Vite, Docker service `gateway`): Modbus TCP + OPC UA + expression drivers, canonical JSON, delivery with failover / mirrors / disk buffer, site agent registry, console. See [docs/bimba-gateway.md](docs/bimba-gateway.md) |
 | `django-backend/…/es_consume.py` | Event Streams **consumer**: consume REST API (batch, long poll) → spool → `bimba_ingest(…,'boomi-es')` (service `django-es-consumer`) |
 | `docs/it-receivers.md` | Kafka and other IT receivers (mirror routes, Confluent/MSK/Event Hubs/webhook/Splunk examples) |
 | `tools/eventstreams-mock/` | **Test-only** stand-in for the Event Streams produce REST API (profile `es-mock`) |
-| `ignition/bimba/` | Plugin `config.json` (destinations, auth, batching) + demo tag export |
+| `ignition/bimba/` | Gateway config folder: `config.json` (destinations, auth, batching), `demo-tags.json` (tag tree), `console-sources.json` (device connections) |
 | `django-backend/` | **BIMBA Ingest** (end system #2, Django) + **BIMBA (REST + WS)**: `POST /api/ingest/` (API key), MQTT ingest command, read API, WebSocket `/ws/live/`, admin |
 | `django-backend/telemetry/sql/bimba_ingest.sql` | **Shared write path**: the one SQL function both Boomi and BIMBA Ingest call (dedupe, latest values, NOTIFY) |
+| `site-agent/` | **BIMBA Site Agent**: Windows installer (.exe, .NET Framework 4.8) for any SCADA PC. Asks for an enrollment token or organization user, registers the machine with the BIMBA Gateway, runs as a service sending heartbeats. Build: `scripts/build-site-agent.ps1` |
 | `react-ui/` | **BIMBA live UI** (React + Vite), served by nginx on :3080 |
-| `simulators/` | Modbus SCADA sim (Modbus TCP PLC) + OPC UA meter that Ignition reads (stand-ins for real field devices) |
+| `simulators/` | Modbus SCADA sim (Modbus TCP PLC) + OPC UA meter that the BIMBA Gateway reads (stand-ins for real field devices) |
 | `docs/` | Ignition install, Boomi process, payload format |
 
 ## Data model (PostgreSQL)
 | Table | Content |
 |---|---|
-| `bimba_machine` | plant / machine (from the Ignition folder) |
+| `bimba_machine` | plant / machine (from the tag tree folder) |
 | `bimba_tag` | tag master + **latest value, quality, time, which end system stored it** |
 | `bimba_measurement` | full history, unique `message_id` (idempotent), plugin `seq`, `received_via` |
 | `bimba_ingest_batch` | one row per batch per end system: counts, duplicates, seq range |
@@ -93,7 +91,9 @@ over to BIMBA Ingest automatically.
 ## Verified in this POC
 | Test | Result |
 |---|---|
-| Module install on Ignition 8.1.55 | Loads, imports 23 demo tags, subscribes to 18 |
+| BIMBA Gateway replaces Ignition | 18 tags on 3 connections (Modbus, OPC UA, expressions) all GOOD, delivered via Event Streams and stored as `boomi-es` ~1 s after reading; PLC stopped → its 8 tags BAD in the DB within seconds, others unaffected, recovered 10 s after restart; Settings save → reload in ~5 s |
+| Site agent over gateway HTTPS | Unpinned self-signed certificate refused with its fingerprint, pinned → enrolled (same agent id as under Ignition), wrong pin → refused |
+| Module install on Ignition 8.1.55 (legacy) | Loads, imports 23 demo tags, subscribes to 18 |
 | Event Streams destination (against the local stand-in) | Batches produced in the documented `messages[]` format with Bearer token; `batch` and `message` modes |
 | Event Streams 503 / wrong token (401) | Fails over to BIMBA Ingest within one batch; fails back ≤ 15 s after recovery; error visible in status page |
 | Full loop plugin → Event Streams (single-message produce) → consumer (batch consume) → PostgreSQL | 320 messages in 32 batches stored as `boomi-es`, seq 417/417 |
@@ -115,15 +115,11 @@ over to BIMBA Ingest automatically.
   [docs/boomi-setup.md](docs/boomi-setup.md) §3 Option B and [docs/database.md](docs/database.md).
   `django-es-consumer` is stopped because it shares the subscription.
 * The plugin's Event Streams destination still returns **401**: enter a valid produce token
-  with `.\scripts\set-eventstreams.ps1`. Until then data reaches the DB via BIMBA Ingest (failover, stored as `bimba-rest`).
+  in BIMBA Gateway → Destinations → `boomi-eventstreams`. Until then data reaches the DB via BIMBA Ingest (failover, stored as `bimba-rest`).
 * The shared DB runs PostgreSQL 10, so Django is pinned to the end-of-life 4.0 release
   (see [docs/database.md](docs/database.md)).
-* The module is unsigned (dev flag), and its config lives in a JSON file with credentials
-  in plain text. Production needs a signed module, a Gateway config page, and secrets in
-  Ignition's encrypted settings.
+* Gateway secrets can be `${ENV}` references, but the config is still a JSON file; production needs a secret store.
+  OPC UA security policies other than None are not implemented yet (see [docs/bimba-gateway.md](docs/bimba-gateway.md)).
 * The BIMBA REST read API and WebSocket are unauthenticated (POC). Only `/api/ingest/` needs a key.
 * Plain HTTP / MQTT without TLS inside the Docker network. Use HTTPS and MQTTS across real networks.
 * No retention or partitioning on `bimba_measurement`. Add a partition/retention policy for real volumes.
-* `SUBSTN-M1` stays BAD until the OPC UA connection `METER` is created in Ignition.
-
-The earlier broker-based edge/cloud POC is kept in `_archive/brd-edge-cloud-poc/`.

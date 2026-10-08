@@ -103,14 +103,3 @@ export function ActionBar({ onTest, onSave, onRevert, dirty, invalid, testLabel 
     </div>
   );
 }
-
-export function Seg({ items, value, onChange, label }) {
-  if (items.length < 2) return null;
-  return (
-    <div className="cr-seg" role="group" aria-label={label}>
-      {items.map((it) => (
-        <button key={it} type="button" className={it === value ? "on" : ""} aria-pressed={it === value} onClick={() => onChange(it)}>{it}</button>
-      ))}
-    </div>
-  );
-}

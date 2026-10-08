@@ -17,15 +17,15 @@ export function computeAlarms(p, machines) {
     }
     if (r.bufferedBatches > 0) out.push({ s: "warning", t: `Route ${r.name} buffering`, d: `${r.bufferedBatches} batches on disk` });
   }
-  const main = p?.delivery?.routes?.find((r) => r.name === "main");
+  const main = p?.delivery?.routes?.find((r) => (r.kind ?? r.name) === "main");
   const act = main?.destinations?.find((d) => d.name === main.activeDestination);
   if (act && act.role !== "primary") out.push({ s: "warning", t: "Running on failover", d: `${act.name} is carrying the data` });
 
-  // every device-driven machine BAD while expression tags (LINE-SIM) still update = Ignition trial expired
+  // every device-driven machine BAD while expression tags (LINE-SIM) still update = gateway lost the field network
   const lost = machines.filter((m) => m.health === "critical" && m.kind !== "generic");
   const device = machines.filter((m) => m.kind !== "generic" && m.kind !== "line");
   if (lost.length && lost.length === device.length && machines.some((m) => m.kind === "line" && m.health === "good")) {
-    out.push({ s: "critical", t: "All device drivers BAD", d: "Ignition trial expired? Gateway → Status → Overview → Reset Trial" });
+    out.push({ s: "critical", t: "All device drivers BAD", d: "The gateway cannot reach any field device. Check the device network and BIMBA Gateway → Devices." });
   }
   for (const m of machines) out.push(...machineAlarms(m));
   return out;

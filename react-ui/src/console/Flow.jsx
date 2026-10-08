@@ -4,7 +4,7 @@ import { ago, t3 } from "./api.js";
 import { fmt, machineList, machineSource, pathKey, pointIndex, rawFor, sourceLine } from "./model.js";
 import { Json, Quality, TickCell, useNow } from "./ui.jsx";
 
-const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT" };
+const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT", database: "BIMBA database" };
 
 function targetName(d) {
   if (d.transport === "rest" && /\/api\/ingest\/?$/.test(d.endpoint ?? "")) return "BIMBA Ingest";

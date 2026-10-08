@@ -172,9 +172,9 @@ function Hub({ config, plugin, machines, link }) {
           <div className="ar" aria-hidden="true" />
           <div className="st"><span className="k">Edge agent</span><b>{plugin?.reachable ? plugin.edgeId : "unreachable"}</b><span className="muted">{plugin?.collector?.subscribedTags ?? 0} tags · seq {(plugin?.collector?.lastSeq ?? 0).toLocaleString()}</span></div>
           <div className="ar" aria-hidden="true" />
-          <div className="st"><span className="k">Main route</span><b>{(plugin?.delivery?.routes ?? []).find((r) => r.name === "main")?.activeDestination ?? "buffering"}</b><span className="muted">primary → failover</span></div>
+          <div className="st"><span className="k">Main route</span><b>{(plugin?.delivery?.routes ?? []).find((r) => (r.kind ?? r.name) === "main")?.activeDestination ?? "buffering"}</b><span className="muted">primary → failover</span></div>
           <div className="ar" aria-hidden="true" />
-          <div className="st"><span className="k">Mirror routes</span><b>{(plugin?.delivery?.routes ?? []).filter((r) => r.name !== "main").map((r) => r.name).join(", ") || "none"}</b><span className="muted">own retry + disk buffer</span></div>
+          <div className="st"><span className="k">Mirror routes</span><b>{(plugin?.delivery?.routes ?? []).filter((r) => (r.kind ?? r.name) !== "main").map((r) => r.name).join(", ") || "none"}</b><span className="muted">own retry + disk buffer</span></div>
         </div>
       </section>
 

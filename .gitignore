@@ -2,8 +2,6 @@
 __pycache__/
 *.pyc
 node_modules/
-ignition-module/build/
-ignition-module/.gradle/
 ignition/bimba/buffer/
 ignition/bimba/.*.imported
 react-ui/dist/
@@ -14,4 +12,17 @@ ignition/bimba/console-sources.json
 
 # local archives / tooling
 *.zip
-.github/modernize/
+# BIMBA Site Agent build output + local demo credentials
+site-agent/bin/
+site-agent/obj/
+site-agent/dist/
+site-agent/installer/bin/
+site-agent/installer/obj/
+site-agent/*.cer
+*.local.txt
+# BIMBA Gateway build output (Gradle, Vite)
+bimba-gateway/build/
+bimba-gateway/.gradle/
+bimba-gateway/src/main/resources/static/
+bimba-gateway/ui/node_modules/
+bimba-gateway/ui/dist/

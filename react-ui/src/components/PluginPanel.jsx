@@ -1,6 +1,6 @@
 import { ago } from "../format.js";
 
-// Health of the BIMBA IT/OT Agent (Ignition module) as seen from its /system/bimba-status page.
+// Health of the BIMBA Gateway as seen from its /system/bimba-status page.
 export default function PluginPanel({ status, error }) {
   const reachable = status?.reachable;
   const d = status?.delivery;
@@ -8,7 +8,7 @@ export default function PluginPanel({ status, error }) {
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Ignition plugin</h2>
+        <h2>BIMBA Gateway</h2>
         <Status state={reachable ? (d?.bufferedBatches > 0 ? "warning" : "good") : "critical"}
                 label={reachable ? (d?.bufferedBatches > 0 ? "Buffering" : "Running") : "Unreachable"} />
       </div>
@@ -26,7 +26,7 @@ export default function PluginPanel({ status, error }) {
             <div><dt>Disk buffer (main)</dt><dd>{d?.bufferedBatches ?? 0} batches · {fmtBytes(d?.bufferedBytes ?? 0)}</dd></div>
             <div><dt>Replayed</dt><dd>{(d?.replayedMessages ?? 0).toLocaleString()} msgs</dd></div>
             <div><dt>Last seq</dt><dd className="num">{(c?.lastSeq ?? 0).toLocaleString()}</dd></div>
-            {(d?.routes ?? []).filter((r) => r.name !== "main").map((r) => (
+            {(d?.routes ?? []).filter((r) => (r.kind ?? r.name) !== "main").map((r) => (
               <div key={r.name}>
                 <dt>Mirror · {r.name}</dt>
                 <dd>{r.activeDestination ? "delivering" : <span className="bad-text">buffering</span>} · {r.bufferedBatches} buffered</dd>

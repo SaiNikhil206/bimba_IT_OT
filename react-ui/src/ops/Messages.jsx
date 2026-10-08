@@ -221,7 +221,7 @@ function Delivery({ m, cfg, points, paused }) {
 }
 
 function deviceView(msg, p, cfg) {
-  if (!p) return { protocol: msg.source?.protocol ?? "ignition", address: msg.source?.address };
+  if (!p) return { protocol: msg.source?.protocol ?? "gateway", address: msg.source?.address };
   if (p.kind === "modbus") {
     const conn = cfg?.sources?.modbus?.[p.device] ?? {};
     const mm = /^(?:\d+\.)?(HR|IR|C|DI)(\d+)$/i.exec(p.address ?? "");
@@ -240,7 +240,7 @@ function deviceView(msg, p, cfg) {
     const conn = cfg?.sources?.opcua?.[p.device] ?? {};
     return { protocol: "OPC UA", endpoint: conn.endpoint, nodeId: p.node, dataType: p.dataType, value: msg.tagValue };
   }
-  return { protocol: "Ignition expression", tag: msg.source?.address, value: msg.tagValue, note: "computed in the gateway, no field device" };
+  return { protocol: "Gateway expression", tag: msg.source?.address, value: msg.tagValue, note: "computed in the gateway, no field device" };
 }
 
 /** Pretty JSON with syntax colors; undefined fields are left out, like JSON.stringify. */

@@ -13,7 +13,7 @@ const DX = 640; // left edge of the target column
 const DW = 150;
 const DBX = 930;
 
-const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT" };
+const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "REST", mqtt: "MQTT", database: "BIMBA database" };
 function targetName(d) {
   if (/\/api\/ingest\/?$/.test(d.endpoint ?? "")) return "BIMBA Ingest";
   return TARGET[d.transport] ?? d.transport;
@@ -44,7 +44,7 @@ export default function River({ machines, plugin, onValues, stored, rateByMachin
   const dests = useMemo(() => {
     const out = [];
     for (const r of plugin?.delivery?.routes ?? []) {
-      for (const d of r.destinations ?? []) out.push({ ...d, route: r.name, active: r.activeDestination === d.name, main: r.name === "main" });
+      for (const d of r.destinations ?? []) out.push({ ...d, route: r.name, active: r.activeDestination === d.name, main: (r.kind ?? r.name) === "main" });
     }
     return out;
   }, [plugin]);

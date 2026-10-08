@@ -8,7 +8,7 @@ import { ActionBar, Input, Select } from "./forms.jsx";
 
 // OT source pages: Modbus TCP devices and OPC UA connections (same API + rules as /console).
 
-const gatewayUrl = () => `${window.location.protocol}//${window.location.hostname}:8088/web/config/`;
+const gatewayUrl = () => `${window.location.protocol}//${window.location.hostname}:8090/`;
 const POLICIES = ["None", "Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss"];
 
 function liveOf(live, p) {
@@ -64,8 +64,7 @@ function SourceStatus({ config, machines, kind, device, link }) {
       <MachineChips ids={h.ids} machines={machines} link={link} />
       {h.state === "critical" && (
         <p className="bx-note bad">
-          Every tag on {device} reads BAD. Check the device is running and the connection in Ignition. If every
-          device-driven machine went BAD at once, the Ignition trial may have expired (Gateway → Status → Overview → Reset Trial).
+          Every tag on {device} reads BAD. Check the device is running and its connection in the BIMBA Gateway.
         </p>
       )}
     </section>

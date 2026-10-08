@@ -1,11 +1,7 @@
 {
   "plantId": "PLANT01",
-  "edgeId": "ignition-gw01",
-  "tagRoots": [
-    "[default]BIMBA"
-  ],
-  "defaultMachineId": "IGNITION",
-  "rediscoverSeconds": 30,
+  "edgeId": "bimba-gw01",
+  "pollMs": 1000,
   "batch": {
     "maxMessages": 500,
     "maxWaitMs": 1000
@@ -16,7 +12,7 @@
     "replayPerCycle": 20
   },
   "provisionTagsFile": "demo-tags.json",
-  "provisionTagsBasePath": "[default]",
+  "sourcesFile": "console-sources.json",
   "destinations": [
     {
       "name": "boomi-eventstreams",
@@ -109,5 +105,16 @@
       "timeoutMs": 5000,
       "retryAfterSeconds": 30
     }
-  ]
+  ],
+  "agents": {
+    "enabled": true,
+    "jdbcUrl": "jdbc:postgresql://${BIMBA_DB_HOST}:${BIMBA_DB_PORT}/${BIMBA_DB_NAME}",
+    "dbUser": "${BIMBA_DB_USER}",
+    "dbPassword": "${BIMBA_DB_PASSWORD}",
+    "schema": "${BIMBA_DB_SCHEMA}",
+    "heartbeatSeconds": 60,
+    "requireHttps": false,
+    "maxFailures": 10,
+    "failureWindowMinutes": 15
+  }
 }

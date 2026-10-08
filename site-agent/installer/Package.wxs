@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BIMBA Site Agent MSI.
+    msiexec /i BIMBA-Site-Agent.msi /qn SERVER=https://gateway.example.com:8443 TOKEN=<enrollment token>
+            [SITE="Plant 2"] [NAME=<display name>] [TRUSTCERT=<sha256 of a self-signed gateway certificate>]
+  Windows Installer owns the program file, the service and the Apps entry. Our exe only does what MSI cannot:
+    enroll            after the files are copied, before the service starts: registers the machine (token used once,
+                      never stored) and writes the locked-down configuration in ProgramData
+    uninstall-notify  before the service stops: the service tells the gateway and deletes its certificate and key
+    remove-data       after the service stopped: deletes the configuration and logs
+  Upgrades (same UpgradeCode, higher version) keep the configuration, so they need no TOKEN.
+  TOKEN is a hidden property and the enroll command line is hidden, so the token does not appear in MSI logs.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="BIMBA Site Agent" Manufacturer="BIMBA" Version="$(var.Version)"
+           UpgradeCode="3AA8EDB4-5110-4D79-A67E-F83257CD0E0B" Scope="perMachine" Compressed="yes">
+    <SummaryInformation Description="Registers this machine with its organization's BIMBA gateway" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of the BIMBA Site Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AgentIcon" SourceFile="$(var.AgentExe)" />
+    <Property Id="ARPPRODUCTICON" Value="AgentIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPCOMMENTS" Value="Registers this machine with its organization's BIMBA gateway and reports that it is online." />
+
+    <!-- install options (Secure: passed from the command line to the elevated install) -->
+    <Property Id="SERVER" Secure="yes" />
+    <Property Id="TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="SITE" Secure="yes" />
+    <Property Id="NAME" Secure="yes" />
+    <Property Id="TRUSTCERT" Secure="yes" />
+
+    <!-- already registered (upgrade / reinstall): no token needed -->
+    <Property Id="AGENTCONFIG">
+      <DirectorySearch Id="AgentDataDir" Path="[CommonAppDataFolder]BIMBA Site Agent" Depth="0">
+        <FileSearch Name="agent.json" />
+      </DirectorySearch>
+    </Property>
+    <!-- installed earlier with the .exe (its own Apps entry and service) -->
+    <Property Id="EXEINSTALL">
+      <RegistrySearch Id="ExeInstallSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BIMBASiteAgent"
+                      Name="DisplayName" Type="raw" Bitness="always64" />
+    </Property>
+
+    <Launch Condition="Installed OR NOT EXEINSTALL"
+            Message="The BIMBA Site Agent was installed with BIMBA-Site-Agent-Setup.exe on this computer. Remove it first (Settings &gt; Apps &gt; BIMBA Site Agent), then install the MSI." />
+    <Launch Condition="Installed OR AGENTCONFIG OR (SERVER AND TOKEN)"
+            Message="Give the gateway address and an enrollment token, for example: msiexec /i BIMBA-Site-Agent.msi SERVER=https://gateway.example.com:8443 TOKEN=&lt;token&gt;. For the setup wizard run BIMBA-Site-Agent-Setup.exe instead." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BIMBA Site Agent">
+        <Component Id="AgentComponent" Bitness="always64">
+          <File Id="AgentExe" Source="$(var.AgentExe)" Name="bimba-site-agent.exe" KeyPath="yes" />
+          <ServiceInstall Id="AgentService" Name="BIMBASiteAgent" DisplayName="BIMBA Site Agent"
+                          Description="Registers this machine with its organization's BIMBA gateway and reports that it is online."
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="NT AUTHORITY\LocalService"
+                          Arguments="service" Vital="yes">
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                                RestartServiceDelayInSeconds="60" ResetPeriodInDays="1" />
+          </ServiceInstall>
+          <!-- "Automatic (Delayed Start)", like the .exe install (MSI's own ServiceConfig is documented as unreliable) -->
+          <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BIMBASiteAgent" Name="DelayedAutostart" Value="1" Type="integer" />
+          <ServiceControl Id="AgentServiceControl" Name="BIMBASiteAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          <!-- tells the exe that Windows Installer owns this installation (it then never touches files or the service) -->
+          <RegistryValue Root="HKLM" Key="SOFTWARE\BIMBA\Site Agent" Name="ProductCode" Value="[ProductCode]" Type="string" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\BIMBA\Site Agent" Name="InstalledBy" Value="msi" Type="string" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Agent" Title="BIMBA Site Agent">
+      <ComponentRef Id="AgentComponent" />
+    </Feature>
+
+    <!-- custom actions: run the installed exe quietly (no console window), as SYSTEM -->
+    <SetProperty Id="BimbaEnroll" Sequence="execute" Before="BimbaEnroll" Condition="NOT REMOVE AND TOKEN"
+                 Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; enroll --server &quot;[SERVER]&quot; --token &quot;[TOKEN]&quot; --site &quot;[SITE]&quot; --name &quot;[NAME]&quot; --trust-cert &quot;[TRUSTCERT]&quot;" />
+    <CustomAction Id="BimbaEnroll" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
+                  Return="check" HideTarget="yes" />
+
+    <SetProperty Id="BimbaNotifyUninstall" Sequence="execute" Before="BimbaNotifyUninstall"
+                 Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"
+                 Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; uninstall-notify" />
+    <CustomAction Id="BimbaNotifyUninstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
+                  Return="ignore" />
+
+    <SetProperty Id="BimbaRemoveData" Sequence="execute" Before="BimbaRemoveData"
+                 Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"
+                 Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; remove-data" />
+    <CustomAction Id="BimbaRemoveData" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="BimbaEnroll" After="InstallFiles" Condition="NOT REMOVE AND TOKEN" />
+      <Custom Action="BimbaNotifyUninstall" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="BimbaRemoveData" After="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

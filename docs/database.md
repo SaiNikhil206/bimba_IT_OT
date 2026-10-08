@@ -4,7 +4,19 @@ Django and the Boomi listener both write to **`bimba_chromalab` on `103.120.176.
 (login `bimba_pg_admin`). The database already holds the Chromalab application's tables. They
 are all in schema `public`, including that app's own `django_migrations`.
 
-**Every BIMBA object lives in schema `bimba`, and nothing in `public` is read or written.**
+**Every BIMBA object lives in a BIMBA schema, and nothing in `public` is read or written.**
+
+| Schema | Used by | Holds |
+|---|---|---|
+| `bimba` (`BIMBA_DB_SCHEMA`) | Django (BIMBA Operations, BIMBA Ingest), Boomi listener | readings (`bimba_machine`, `bimba_tag`, `bimba_measurement`, `bimba_ingest_batch`), Operations accounts and organizations |
+| `bimba_ignition` (`BIMBA_GATEWAY_DB_SCHEMA`) | BIMBA Gateway (the Ignition-replacement server; also the legacy Ignition module) | gateway accounts, organizations, roles, sessions, audit log, destinations, pipelines, machine owners, site agents |
+
+Both schemas have the same tables (the same Django migrations). Django migrates `bimba` and then, with
+`migrate_gateway_schema` at every start, `bimba_ignition`; the gateway (Java) only uses `bimba_ignition` and writes
+every name schema-qualified. On 2026-10-08 the gateway's configuration was copied from `bimba` into `bimba_ignition`
+(not the readings). The copies of the gateway tables left in `bimba` are no longer used. Accounts are now separate:
+a password changed in the gateway console does not change the Operations / Django admin account, and site agents
+enrolled through the gateway are recorded in `bimba_ignition` only.
 
 | Schema `bimba` | Created by |
 |---|---|
@@ -15,9 +27,11 @@ are all in schema `public`, including that app's own `django_migrations`.
 
 How that's enforced:
 - `ensure_schema` (runs before `migrate`) creates the schema, and does nothing else.
-- Every Django connection runs `SET search_path TO "bimba"` when it opens (`telemetry/apps.py`),
-  so Django can't see or create tables in `public`. It's set per connection because the
-  pooler on port 6433 rejects the `options` startup parameter.
+- Django's database backend `bimba/pgbackend` sends **every statement** as
+  `SET LOCAL search_path TO "<schema>"; <statement>` in one round trip, so the schema applies to exactly that statement
+  on whatever server connection the pooler picks (see below). A session-level `SET search_path` (the earlier approach)
+  is not safe there: on 2026-10-08 a migration ran on a pooled connection with the default path and created BIMBA
+  tables in `public`; they were removed again the same day.
 - `bimba_ingest()` carries `SET search_path FROM CURRENT` (= `bimba`), and Boomi calls it
   schema-qualified (`bimba.bimba_ingest(...)`).
 
@@ -36,9 +50,12 @@ The Boomi connection **BIMBA PostgreSQL Connection** stores the same credentials
   server to PostgreSQL 13+ and move Django back to a supported release (4.2 LTS / 5.x).
   `db_default` (Django 5) was replaced by `default=timezone.now` plus DB-side
   `DEFAULT now()` set in migration `0001`.
-- **Port 6433 is a pooler.** It keeps one backend per client session (so `SET` and `LISTEN`
-  work), but it doesn't reset sessions when they're handed to the next client. Another
-  client using the same login can inherit `search_path=bimba` or a `LISTEN`. That's harmless
-  for BIMBA, because all its SQL is schema-qualified or pinned.
+- **Port 6433 is a transaction-mode pooler.** Each transaction may run on another server connection, and session
+  settings (`SET`, `LISTEN`) stay on the server connection, where the next client of the same login inherits them.
+  So nothing in BIMBA may depend on a session setting: Django pins the schema per statement (`bimba/pgbackend`,
+  server-side cursors off), the gateway and Boomi write schema-qualified names, `LISTEN/NOTIFY` falls back to polling.
+- A client that drops in the middle of a transaction can leave it "idle in transaction" on the pooler, holding its
+  locks (seen 2026-10-08 during a migration). End it with `pg_terminate_backend(pid)` (own login only) after checking
+  `pg_stat_activity`.
 - Direct port 5432 isn't reachable from here (`pg_hba.conf`), and connections are **not SSL**.
   Use SSL before sending real plant data over the internet.

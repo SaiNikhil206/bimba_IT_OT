@@ -1,10 +1,11 @@
 """OT/IT Bridge Console API (/api/console/...).
 
-Reads and writes the BIMBA IT/OT Agent's own files in the shared config folder (compose mounts
-./ignition/bimba at BIMBA_CONFIG_DIR), so a saved change is what the plugin actually runs:
-  config.json          destinations (Kafka mirror, Boomi Event Streams). The plugin hot-reloads it in ~10 s.
-  demo-tags.json       Ignition tag export: Modbus register / OPC UA node per tag. Re-imported on reload.
-  console-sources.json connection settings of the Modbus devices / OPC UA servers, used by the tests.
+Reads and writes the BIMBA Gateway's own files in the shared config folder (compose mounts
+./ignition/bimba at BIMBA_CONFIG_DIR), so a saved change is what the gateway actually runs:
+  config.json          plant / edge id (delivery destinations moved to the database: gateway console -> Delivery;
+                       they are shown here read-only and are edited only in the gateway console).
+  demo-tags.json       tag tree: Modbus register / OPC UA node / expression per tag.
+  console-sources.json connection settings of the Modbus devices / OPC UA servers (gateway + tests).
 Secrets are never returned: passwords come back as null + "passwordSet", Event Streams tokens only as
 ${ENV_VAR} references (the value stays in .env). There is no login (POC, like the read API); writes are
 protected against cross-site requests by Django's CSRF check (the cookie is set by GET config/).
@@ -28,7 +29,8 @@ from . import probes
 log = logging.getLogger("telemetry.console")
 _lock = threading.Lock()
 
-MODBUS_SERVER = "Ignition OPC UA Server"
+MODBUS_SERVER = "BIMBA Modbus"               # driver name in the tag tree (BIMBA Gateway)
+MODBUS_SERVERS = {MODBUS_SERVER, "modbus", "Ignition OPC UA Server"}   # also read Ignition tag exports
 MODBUS_ITEM = re.compile(r"^ns=1;s=\[([^\]]+)\](.+)$")
 OPC_NODE = re.compile(r"^(ns=\d+;)?[isgb]=.+$")
 DEFAULT_SOURCES = {
@@ -95,7 +97,7 @@ def _point(path, t):
     item, server = t.get("opcItemPath") or "", t.get("opcServer") or ""
     if t.get("valueSource") == "expr":
         p.update(kind="expression", expression=t.get("expression"))
-    elif t.get("valueSource") == "opc" and server == MODBUS_SERVER and MODBUS_ITEM.match(item):
+    elif t.get("valueSource") == "opc" and server in MODBUS_SERVERS and MODBUS_ITEM.match(item):
         device, address = MODBUS_ITEM.match(item).groups()
         p.update(kind="modbus", device=device, address=address, scale=_scale(t))
     elif t.get("valueSource") == "opc":
@@ -125,10 +127,25 @@ def _set_scale(t, scale):
     t.update(scaleMode="Linear", rawLow=0, rawHigh=raw, scaledLow=0, scaledHigh=int(high) if high == int(high) else high)
 
 
-# ---------------------------------------------------------------- destinations (config.json)
+# ---------------------------------------------------------------- destinations (read-only, gateway's table)
+
+GATEWAY_DELIVERY = "Destinations are managed in the BIMBA Gateway console (Delivery), not here any more."
+
 
 def _dest(cfg, transport):
-    return next((d for d in cfg.get("destinations", []) if d.get("transport") == transport), None)
+    """First destination of a transport in delivery order. The BIMBA Gateway keeps them in bimba_gw_destination
+    (secrets encrypted with a key only the gateway has); cfg is unused and kept for the callers."""
+    from .models import GatewayDestination
+    for row in GatewayDestination.objects.order_by("position", "id"):
+        d = dict(row.config or {}, name=row.name)
+        if d.get("transport") == transport:
+            return d
+    return None
+
+
+def _plain(v):
+    """a stored secret Django can use: ${ENV} references and plain values, not the gateway's encrypted ones"""
+    return "" if str(v or "").startswith("enc:") else (v or "")
 
 
 def _sasl(jaas):
@@ -145,17 +162,19 @@ def _kafka_view(d):
         "bootstrapServers": (d or {}).get("bootstrapServers", ""),
         "topic": (d or {}).get("topic", "bimba.{plantId}.telemetry"),
         "kafkaMode": (d or {}).get("kafkaMode", "batch"),
-        "securityProtocol": k.get("security.protocol", "PLAINTEXT"),
-        "saslMechanism": k.get("sasl.mechanism", "PLAIN"),
-        "username": _sasl(k.get("sasl.jaas.config")),
+        "securityProtocol": (d or {}).get("securityProtocol") or k.get("security.protocol", "PLAINTEXT"),
+        "saslMechanism": (d or {}).get("saslMechanism") or k.get("sasl.mechanism", "PLAIN"),
+        "username": (d or {}).get("username") or _sasl(k.get("sasl.jaas.config")),
         "password": None,
-        "passwordSet": bool(re.search(r'password="[^"]+"', k.get("sasl.jaas.config") or "")),
+        "passwordSet": bool((d or {}).get("password")) or bool(re.search(r'password="[^"]+"', k.get("sasl.jaas.config") or "")),
         "timeoutMs": (d or {}).get("timeoutMs", 5000),
         "retryAfterSeconds": (d or {}).get("retryAfterSeconds", 15),
     }
 
 
 def _kafka_password(d):
+    if (d or {}).get("password"):
+        return _plain(d["password"])
     m = re.search(r'password="([^"]*)"', ((d or {}).get("kafka") or {}).get("sasl.jaas.config") or "")
     return m.group(1) if m else ""
 
@@ -171,7 +190,7 @@ def _es_view(d):
         "enabled": bool((d or {}).get("enabled", False)),
         "url": (d or {}).get("url", ""),
         "token": token if ref else "",
-        "literalToken": bool(token) and not ref,
+        "literalToken": False,
         "tokenEnvSet": bool(env_name and os.environ.get(env_name, "").strip()),
         "esMode": (d or {}).get("esMode", "batch"),
         "esApi": (d or {}).get("esApi", "auto"),
@@ -323,91 +342,18 @@ def save_source(request, kind):
             _touch_config()
     log.info("console: %s %s saved (%d tags changed)", kind, device, changed)
     return JsonResponse({"saved": True, "tagsChanged": changed,
-                         "message": (f"Saved. {changed} tag(s) changed; the plugin re-imports them into Ignition "
-                                     f"within about 10 s." if changed else "Saved. No tag mapping changed.")})
+                         "message": (f"Saved. {changed} tag(s) changed; the BIMBA Gateway applies them "
+                                     f"within about 10 s." if changed else "Saved. The BIMBA Gateway applies it within about 10 s.")})
 
 
 @require_http_methods(["PUT"])
 def save_kafka(request):
-    b = _json_body(request)
-    if b is None:
-        return _bad("body is not JSON")
-    try:
-        servers = ",".join(s.strip() for s in str(b.get("bootstrapServers") or "").split(",") if s.strip())
-        if not servers:
-            raise ValueError("Bootstrap servers are required")
-        if not str(b.get("topic") or "").strip():
-            raise ValueError("Topic is required")
-        proto = b.get("securityProtocol") or "PLAINTEXT"
-        if proto not in ("PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"):
-            raise ValueError("unknown security protocol")
-        mech = b.get("saslMechanism") or "PLAIN"
-        if mech not in ("PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"):
-            raise ValueError("unknown SASL mechanism")
-        mode = b.get("kafkaMode") if b.get("kafkaMode") in ("batch", "message") else "batch"
-        timeout = _int(b.get("timeoutMs", 5000), "Timeout", 500, 120000)
-        retry = _int(b.get("retryAfterSeconds", 15), "Retry after", 1, 3600)
-    except ValueError as exc:
-        return _bad(str(exc))
-    with _lock:
-        cfg = _read("config.json")
-        d = _dest(cfg, "kafka")
-        if d is None:
-            d = {"name": "kafka", "role": "mirror", "transport": "kafka", "kafka": {}}
-            cfg.setdefault("destinations", []).append(d)
-        password = _merge_password(b.get("password"), _kafka_password(d))
-        k = dict(d.get("kafka") or {})
-        for key in ("security.protocol", "sasl.mechanism", "sasl.jaas.config"):
-            k.pop(key, None)
-        if proto != "PLAINTEXT":
-            k["security.protocol"] = proto
-        if proto.startswith("SASL"):
-            module = ("org.apache.kafka.common.security.plain.PlainLoginModule" if mech == "PLAIN"
-                      else "org.apache.kafka.common.security.scram.ScramLoginModule")
-            user = str(b.get("username") or "").replace('"', "")
-            k["sasl.mechanism"] = mech
-            k["sasl.jaas.config"] = f'{module} required username="{user}" password="{password.replace(chr(34), "")}";'
-        d.update(enabled=bool(b.get("enabled")), bootstrapServers=servers, topic=b["topic"].strip(),
-                 kafkaMode=mode, kafka=k, timeoutMs=timeout, retryAfterSeconds=retry)
-        _write("config.json", cfg)
-    log.info("console: kafka destination saved")
-    return JsonResponse({"saved": True, "message": "Saved to config.json. The plugin reloads within about 10 s."})
+    return JsonResponse({"error": GATEWAY_DELIVERY, "code": "moved"}, status=410)
 
 
 @require_http_methods(["PUT"])
 def save_eventstreams(request):
-    b = _json_body(request)
-    if b is None:
-        return _bad("body is not JSON")
-    url = str(b.get("url") or "").strip()
-    if not url.startswith("https://"):
-        return _bad("Topic REST URL must start with https://")
-    token = b.get("token")
-    if token is not None and not probes.ENV_REF.match(str(token).strip()):
-        return _bad("Token must be an environment reference like ${BOOMI_ES_PRODUCE_TOKEN}. "
-                    "Put the token itself in .env, never in config.json.")
-    try:
-        timeout = _int(b.get("timeoutMs", 5000), "Timeout", 500, 120000)
-        retry = _int(b.get("retryAfterSeconds", 15), "Retry after", 1, 3600)
-    except ValueError as exc:
-        return _bad(str(exc))
-    with _lock:
-        cfg = _read("config.json")
-        d = _dest(cfg, "eventstreams")
-        if d is None:
-            d = {"name": "boomi-eventstreams", "role": "primary", "transport": "eventstreams"}
-            cfg.setdefault("destinations", []).insert(0, d)
-        auth = dict(d.get("auth") or {"type": "bearer"})
-        auth["type"] = "bearer"
-        if token is not None:
-            auth["token"] = str(token).strip()
-        d.update(enabled=bool(b.get("enabled")), url=url, auth=auth,
-                 esMode=b.get("esMode") if b.get("esMode") in ("batch", "message") else "batch",
-                 esApi=b.get("esApi") if b.get("esApi") in ("auto", "single", "multi") else "auto",
-                 timeoutMs=timeout, retryAfterSeconds=retry)
-        _write("config.json", cfg)
-    log.info("console: event streams destination saved")
-    return JsonResponse({"saved": True, "message": "Saved to config.json. The plugin reloads within about 10 s."})
+    return JsonResponse({"error": GATEWAY_DELIVERY, "code": "moved"}, status=410)
 
 
 # ---------------------------------------------------------------- tests
@@ -433,7 +379,7 @@ def test(request, kind):
             result = probes.kafka(b, cfg.get("plantId", ""))
         elif kind == "eventstreams":
             if b.get("token") is None:
-                b["token"] = ((_dest(_read("config.json"), "eventstreams") or {}).get("auth") or {}).get("token")
+                b["token"] = _plain(((_dest(None, "eventstreams") or {}).get("auth") or {}).get("token"))
             result = probes.eventstreams(b)
         else:
             return _bad("unknown test", 404)
@@ -472,8 +418,8 @@ def kafka_tail(request):
     except (OSError, ValueError) as exc:
         return JsonResponse({"available": False, "error": str(exc)})
     d = _dest(cfg, "kafka")
-    if d is None or not d.get("enabled"):
-        return JsonResponse({"available": False, "error": "The Kafka mirror is not enabled."})
+    if d is None:   # destinations have no "enabled" any more: pipelines decide whether they get data
+        return JsonResponse({"available": False, "error": "No Kafka destination is set up in the BIMBA Gateway."})
     view = _kafka_view(d)
     view["password"] = _kafka_password(d)
     topic = view["topic"].replace("{plantId}", cfg.get("plantId", ""))

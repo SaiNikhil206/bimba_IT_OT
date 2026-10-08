@@ -259,7 +259,7 @@ function Overview({ live, summary: s, summaryError, plugin: p, deliveries, machi
     return c;
   }, [machines]);
 
-  const shownVias = ["boomi-es", "bimba-rest", ...["boomi-rest", "boomi-mqtt", "bimba-mqtt"].filter((v) => (deliveries?.series ?? []).some((r) => r[v] > 0))];
+  const shownVias = ["boomi-es", "bimba-rest", ...["boomi-rest", "boomi-mqtt", "bimba-mqtt", "bimba-gateway"].filter((v) => (deliveries?.series ?? []).some((r) => r[v] > 0))];
   const scopePts = selected ? scopeSeries.get(selected.tagId) : null;
   const sel = selected && live.machines[selected.machineId]?.tags[selected.tag];
   const stats = scopePts?.length
@@ -389,7 +389,7 @@ function systems(cfg, machines, p, s, summaryError) {
   out.push(p?.reachable
     ? { k: "Edge agent", b: p.edgeId, s: "good", st: "UP", d: `${p.module ?? ""} ${p.version ?? ""} · ${p.collector?.subscribedTags ?? 0} tags` }
     : { k: "Edge agent", b: "Ignition", s: p ? "critical" : "neutral", st: p ? "UNREACHABLE" : "…", d: p?.error ?? "" });
-  const TN = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "BIMBA Ingest", mqtt: "MQTT" };
+  const TN = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "BIMBA Ingest", mqtt: "MQTT", database: "BIMBA database" };
   for (const r of p?.delivery?.routes ?? []) {
     for (const d of r.destinations ?? []) {
       const active = r.activeDestination === d.name;

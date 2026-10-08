@@ -48,7 +48,7 @@ export function readingText(t) {
   return cap(t.text) ?? "–";
 }
 
-const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "BIMBA Ingest", mqtt: "MQTT" };
+const TARGET = { eventstreams: "Boomi Event Streams", kafka: "Kafka", rest: "BIMBA Ingest", mqtt: "MQTT", database: "BIMBA database" };
 export const targetName = (d) => (/\/api\/ingest\/?$/.test(d?.endpoint ?? "") ? "BIMBA Ingest" : TARGET[d?.transport] ?? d?.name ?? "–");
 
 /** Every destination with its route, active flag and a plain-language status. */
@@ -70,10 +70,10 @@ export function pipeline({ cfg, machines, plugin, summary, summaryError, deliver
   const conns = Object.keys(cfg?.sources?.modbus ?? {}).length + Object.keys(cfg?.sources?.opcua ?? {}).length;
   const devState = !tags.length ? "neutral" : ok === tags.length ? "good" : ok ? "warning" : "critical";
 
-  const main = plugin?.delivery?.routes?.find((r) => r.name === "main");
+  const main = plugin?.delivery?.routes?.find((r) => (r.kind ?? r.name) === "main");
   const act = main?.destinations?.find((d) => d.name === main.activeDestination);
   const buffered = plugin?.delivery?.bufferedBatches ?? 0;
-  const mirrors = (plugin?.delivery?.routes ?? []).filter((r) => r.name !== "main");
+  const mirrors = (plugin?.delivery?.routes ?? []).filter((r) => (r.kind ?? r.name) !== "main");
   const mirrorDown = mirrors.filter((r) => !r.activeDestination).length;
   const delState = !plugin?.reachable ? "neutral" : !act ? "critical" : act.role !== "primary" || buffered || mirrorDown ? "warning" : "good";
   const delText = !plugin?.reachable ? "Unknown" : !act ? "Not delivering, buffering on disk" : act.role !== "primary" ? `On failover: ${targetName(act)}` : `Via ${targetName(act)}`;
@@ -88,7 +88,7 @@ export function pipeline({ cfg, machines, plugin, summary, summaryError, deliver
       note: `${conns} connection${conns === 1 ? "" : "s"} + gateway expressions` },
     { key: "gateway", title: "Edge gateway", state: plugin ? (plugin.reachable ? "good" : "critical") : "neutral",
       text: plugin?.reachable ? `Running for ${since(plugin.startedAt)}` : plugin ? "Not reachable" : "Checking…",
-      note: plugin?.edgeId ?? "Ignition + BIMBA IT/OT Agent" },
+      note: plugin?.edgeId ?? "BIMBA Gateway" },
     { key: "delivery", title: "Delivery", state: delState, text: delText,
       note: buffered ? `${buffered} batches waiting on disk` : mirrors.length ? `Copy to ${mirrors.map((r) => targetName(r.destinations?.[0])).join(", ")}` : "No copies" },
     { key: "database", title: "Database", state: dbState,
@@ -103,4 +103,5 @@ export const VIA = {
   "boomi-rest": { label: "Boomi REST", cls: "s3" },
   "boomi-mqtt": { label: "Boomi MQTT", cls: "s4" },
   "bimba-mqtt": { label: "BIMBA Ingest MQTT", cls: "s5" },
+  "bimba-gateway": { label: "BIMBA Gateway (direct)", cls: "s6" },
 };
