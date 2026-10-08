@@ -20,6 +20,16 @@ namespace Bimba.SiteAgent
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), DisplayName);
         public static string ConfigFile => Path.Combine(DataDir, "agent.json");
         public static string LogDir => Path.Combine(DataDir, "logs");
+        /// <summary>edge collector: Java runtime + jars, extracted by the installer</summary>
+        public static string EdgeDir => Path.Combine(InstallDir, "edge");
+        /// <summary>readings waiting for the gateway (disk buffer)</summary>
+        public static string SpoolDir => Path.Combine(DataDir, "spool");
+        /// <summary>the edge collector's data sources (DPAPI-protected: may contain OPC UA passwords)</summary>
+        public static string SourcesFile => Path.Combine(DataDir, "sources.dat");
+        /// <summary>the edge collector's OPC UA client certificate</summary>
+        public static string EdgePkiDir => Path.Combine(DataDir, "edge-pki");
+        /// <summary>short temp folder for the Java runtime (its Windows socket paths must stay short)</summary>
+        public static string EdgeTempDir => Path.Combine(DataDir, "tmp");
         /// <summary>written by the service when it has told the gateway about an uninstall</summary>
         public static string UninstallMarker => Path.Combine(DataDir, "uninstall-notified");
     }

@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace Bimba.SiteAgent
 {
-    /// <summary>Windows service "BIMBASiteAgent": heartbeat loop.</summary>
+    /// <summary>Windows service "BIMBASiteAgent": heartbeat loop + edge collector (data sources -> gateway).</summary>
     internal sealed class AgentService : ServiceBase
     {
         /// <summary>sent by the uninstaller: tell the gateway, delete the certificate, stop reporting</summary>
@@ -196,10 +196,12 @@ namespace Bimba.SiteAgent
             var nextCertificateTry = DateTime.MinValue;
             int failures = 0;
             using (var session = new Session(cfg, persist: true))
+            using (var edge = new EdgeCollector(cfg, () => session.Certificate, stop))
             {
                 Log.Info(session.Client.UsesCertificate
                     ? $"signing in with client certificate {cfg.CertThumbprint} (valid until {cfg.CertNotAfter})"
                     : "signing in with the agent secret");
+                edge.Start();
                 while (true)
                 {
                     int wait;
@@ -208,6 +210,7 @@ namespace Bimba.SiteAgent
                         bool full = DateTime.UtcNow - lastFull >= FullEvery;
                         var resp = session.Heartbeat(full ? Inventory.Collect(cfg.Server) : null);
                         if (full) lastFull = DateTime.UtcNow;
+                        edge.OnHeartbeat(resp);
                         if (failures > 0) Log.Info($"gateway reachable again after {failures} failed heartbeat(s)");
                         failures = 0;
                         wait = Math.Max(15, Math.Min(3600, Json.Int(resp, "heartbeatSeconds", cfg.HeartbeatSeconds)));

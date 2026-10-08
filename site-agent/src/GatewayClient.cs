@@ -46,7 +46,7 @@ namespace Bimba.SiteAgent
         /// <summary>true when requests sign in with the agent's client certificate (mutual TLS) instead of its secret</summary>
         public bool UsesCertificate { get; }
 
-        public GatewayClient(string server, string pinnedCertSha256 = null, X509Certificate2 clientCertificate = null)
+        public GatewayClient(string server, string pinnedCertSha256 = null, X509Certificate2 clientCertificate = null, TimeSpan? timeout = null)
         {
             Server = Normalize(server);
             pin = string.IsNullOrWhiteSpace(pinnedCertSha256) ? null : pinnedCertSha256.Trim().ToLowerInvariant();
@@ -57,7 +57,7 @@ namespace Bimba.SiteAgent
                 handler.ClientCertificates.Add(clientCertificate);
                 UsesCertificate = true;
             }
-            http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+            http = new HttpClient(handler) { Timeout = timeout ?? TimeSpan.FromSeconds(20) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("BIMBA-Site-Agent/" + Inventory.Version);
         }
 
@@ -113,6 +113,8 @@ namespace Bimba.SiteAgent
         {
             var body = new Dictionary<string, object> { ["status"] = status, ["agentVersion"] = Inventory.Version };
             if (machine != null) body["machine"] = machine;
+            var collector = EdgeCollector.Current?.Status();
+            if (collector != null && status == "running") body["collector"] = collector;
             return Send(HttpMethod.Post, "/system/bimba-agent-heartbeat", body, cfg);
         }
 
@@ -123,10 +125,27 @@ namespace Bimba.SiteAgent
             return Send(HttpMethod.Post, "/system/bimba-agent-certificate", body, cfg);
         }
 
-        private IDictionary<string, object> Send(HttpMethod method, string path, object body, AgentConfig agent)
+        /// <summary>the edge collector's data sources (secrets in plain text; HTTPS + client certificate)</summary>
+        public IDictionary<string, object> GetConfig(AgentConfig cfg) => Send(HttpMethod.Get, "/system/bimba-agent-config", null, cfg);
+
+        /// <summary>long-poll (~25 s) for the next console command; null when there is none</summary>
+        public IDictionary<string, object> NextCommand(AgentConfig cfg) => SendJson(HttpMethod.Post, "/system/bimba-agent-commands", "{}", cfg);
+
+        public IDictionary<string, object> CommandResult(AgentConfig cfg, string id, IDictionary<string, object> answer) =>
+            Send(HttpMethod.Post, "/system/bimba-agent-commands/" + Uri.EscapeDataString(id) + "/result", answer, cfg);
+
+        /// <summary>body = {"messages":[...]} built from the disk buffer without re-parsing the messages</summary>
+        public IDictionary<string, object> PostReadings(AgentConfig cfg, string body) =>
+            SendJson(HttpMethod.Post, "/system/bimba-agent-readings", body, cfg);
+
+        private IDictionary<string, object> Send(HttpMethod method, string path, object body, AgentConfig agent) =>
+            SendJson(method, path, body == null ? null : Json.Serialize(body), agent);
+
+        /// <summary>null for 204 No Content</summary>
+        private IDictionary<string, object> SendJson(HttpMethod method, string path, string body, AgentConfig agent)
         {
             var req = new HttpRequestMessage(method, Server + path);
-            if (body != null) req.Content = new StringContent(Json.Serialize(body), Encoding.UTF8, "application/json");
+            if (body != null) req.Content = new StringContent(body, Encoding.UTF8, "application/json");
             if (agent != null)
             {
                 req.Headers.Add("X-BIMBA-Agent", agent.AgentId);
@@ -158,6 +177,7 @@ namespace Bimba.SiteAgent
                 string text = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 var json = Json.Parse(text);
                 int code = (int)resp.StatusCode;
+                if (code == 204) return null;
                 if (code >= 200 && code < 300) return json;
                 string message = Json.Str(json, "error");
                 if (message == null)

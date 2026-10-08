@@ -53,7 +53,7 @@
         <Component Id="AgentComponent" Bitness="always64">
           <File Id="AgentExe" Source="$(var.AgentExe)" Name="bimba-site-agent.exe" KeyPath="yes" />
           <ServiceInstall Id="AgentService" Name="BIMBASiteAgent" DisplayName="BIMBA Site Agent"
-                          Description="Registers this machine with its organization's BIMBA gateway and reports that it is online."
+                          Description="Registers this machine with its organization's BIMBA gateway, reports that it is online and sends the data of its SCADA sources."
                           Type="ownProcess" Start="auto" ErrorControl="normal" Account="NT AUTHORITY\LocalService"
                           Arguments="service" Vital="yes">
             <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
@@ -79,6 +79,12 @@
     <CustomAction Id="BimbaEnroll" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
                   Return="check" HideTarget="yes" />
 
+    <!-- the edge collector (Java runtime + drivers) is embedded in the exe; unpacked next to it before the service starts -->
+    <SetProperty Id="BimbaInstallEdge" Sequence="execute" Before="BimbaInstallEdge" Condition="NOT REMOVE"
+                 Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; install-edge" />
+    <CustomAction Id="BimbaInstallEdge" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
+                  Return="check" />
+
     <SetProperty Id="BimbaNotifyUninstall" Sequence="execute" Before="BimbaNotifyUninstall"
                  Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"
                  Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; uninstall-notify" />
@@ -92,7 +98,8 @@
                   Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="BimbaEnroll" After="InstallFiles" Condition="NOT REMOVE AND TOKEN" />
+      <Custom Action="BimbaInstallEdge" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="BimbaEnroll" After="BimbaInstallEdge" Condition="NOT REMOVE AND TOKEN" />
       <Custom Action="BimbaNotifyUninstall" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="BimbaRemoveData" After="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>

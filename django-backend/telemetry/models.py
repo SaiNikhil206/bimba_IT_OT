@@ -177,6 +177,7 @@ class Agent(models.Model):
     last_seen = models.DateTimeField(null=True)
     state = models.CharField(max_length=16, default="active")  # active | revoked | uninstalled
     revoked_at = models.DateTimeField(null=True, blank=True)
+    collector = models.JSONField(default=dict)             # data collection status reported by the agent
 
     class Meta:
         db_table = "bimba_agent"
@@ -200,6 +201,48 @@ class AgentEvent(models.Model):
     class Meta:
         db_table = "bimba_agent_event"
         ordering = ["-at"]
+
+
+class AgentSource(models.Model):
+    """A SCADA data source the site agent reads on its machine (edge collector) and pushes to the gateway.
+    name = the machine name its readings report as (unique on the gateway; owned by the agent's organization)."""
+    id = models.UUIDField(primary_key=True)
+    org = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="+")
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="sources")
+    name = models.CharField(max_length=120)
+    kind = models.CharField(max_length=16)                 # opcua | modbus | opcda
+    settings = models.JSONField(default=dict)              # connection; secrets sealed by the gateway ("enc:v1:")
+    tags = models.JSONField(default=list)                  # [{name, address, unit, dataType, ...}]
+    poll_ms = models.IntegerField(default=1000)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(default=timezone.now)
+    created_by = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        db_table = "bimba_agent_source"
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["name"], name="bimba_agent_source_name_uq")]
+
+
+class AgentCommand(models.Model):
+    """Console -> agent request answered within seconds (test a connection, browse tags); the agent long-polls."""
+    id = models.UUIDField(primary_key=True)
+    org = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="+")
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="commands")
+    kind = models.CharField(max_length=16)                 # test | browse | discover
+    request = models.JSONField(default=dict)
+    state = models.CharField(max_length=16, default="pending")  # pending | sent | done | failed | expired
+    result = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        db_table = "bimba_agent_command"
+        indexes = [models.Index(fields=["agent", "state"], name="bimba_agent_cmd_state_ix")]
 
 
 # ---------------------------------------------------------------- BIMBA Gateway console security

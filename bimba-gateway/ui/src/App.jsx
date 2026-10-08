@@ -25,7 +25,7 @@ import Organizations from "./pages/Organizations.jsx";
 // records: the page also has an address per record (/<org>/pipelines/<uid>, .../new), see useRecordAddress
 const PAGES = [
   { path: "/overview", label: "Overview", icon: "◎", perm: ["gateway.view"], element: <Overview /> },
-  { path: "/agents", label: "Site agents", icon: "⌂", perm: ["agents.view"], element: <Agents /> },
+  { path: "/agents", records: true, label: "Site agents", icon: "⌂", perm: ["agents.view"], element: <Agents /> },
   { path: "/pipelines", records: true, label: "Pipelines", icon: "⇉", perm: ["gateway.view"], group: "Delivery", element: <Pipelines /> },
   { path: "/destinations", records: true, label: "Destinations", icon: "◇", perm: ["gateway.view"], group: "Delivery", element: <Destinations /> },
   { path: "/users", records: true, label: "Users", icon: "◉", perm: ["users.manage"], group: "Administration", element: <Users /> },

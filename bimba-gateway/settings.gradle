@@ -1,1 +1,5 @@
 rootProject.name = 'bimba-gateway'
+
+// collect-lib: field drivers + collector shared by the gateway and the edge collector (Java 17, no Spring)
+// edge:        the BIMBA Site Agent's edge collector process (runs on the SCADA machine)
+include 'collect-lib', 'edge'

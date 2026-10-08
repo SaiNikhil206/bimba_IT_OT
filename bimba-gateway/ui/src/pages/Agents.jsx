@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, SecretDialog, Status, usePoll, useToast, when } from "../ui.jsx";
+import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, SecretDialog, Status, useOrgPath, usePoll, useToast, when } from "../ui.jsx";
+import Machine from "./Machine.jsx";
 
 // Machines of the organization that registered with the BIMBA Site Agent (agents.view; revoke = agents.manage),
 // the installer download (agents.view) and the organization's enrollment tokens (agents.manage). The installer
@@ -10,7 +12,13 @@ import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, SecretDialog, Statu
 const ACTIVE = ["online", "offline", "pending"];
 
 export default function Agents() {
+  const key = useParams()["*"];
+  return key ? <Machine id={key} key={key} /> : <AgentList />;
+}
+
+function AgentList() {
   const { can, org } = useSession();
+  const at = useOrgPath();
   const toast = useToast();
   const { data, error, reload } = usePoll("agents", 15_000);
   const [q, setQ] = useState("");
@@ -39,7 +47,7 @@ export default function Agents() {
               const sw = (a.scada || []).filter((s) => s.source !== "service").map((s) => `${s.product} ${s.version || ""}`.trim());
               return (
                   <tr key={a.id}>
-                    <td><b>{a.name}</b><small>{a.hostname}</small></td>
+                    <td><Link className="rowlink" to={at(`/agents/${a.id}`)}><b>{a.name}</b></Link><small>{a.hostname}</small></td>
                     <td>{a.site || <span className="muted">–</span>}<small>{a.os}</small></td>
                     <td>{a.ip}<small>seen from {a.remoteIp}</small></td>
                     <td>{sw.length ? sw.map((s) => <span className="chip" key={s} title={s}>{s}</span>) : <span className="muted">None detected</span>}</td>

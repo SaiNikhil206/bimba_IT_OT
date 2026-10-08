@@ -16,9 +16,9 @@ public class SpaController {
 
     @GetMapping({"/overview", "/pipelines", "/destinations", "/delivery", "/agents", "/users", "/roles", "/audit", "/profile", "/login",
             "/organizations", "/forgot-password", "/reset-password",
-            "/pipelines/{uid}", "/destinations/{uid}", "/users/{uid}", "/roles/{uid}", "/organizations/{uid}",
+            "/pipelines/{uid}", "/destinations/{uid}", "/users/{uid}", "/roles/{uid}", "/organizations/{uid}", "/agents/{uid}",
             "/" + ORG + "/{page:overview|agents|pipelines|destinations|delivery|users|roles|audit}",
-            "/" + ORG + "/{page:pipelines|destinations|users|roles}/{uid}"})
+            "/" + ORG + "/{page:pipelines|destinations|users|roles|agents}/{uid}"})
     String page() {
         return "forward:/index.html";
     }

@@ -179,7 +179,29 @@ services:
     volumes: [boomi-data:/mnt/boomi]
     restart: unless-stopped
 
+  test-scada:                           # TEST ONLY: Windows Server 2022 VM (QEMU/KVM) to try the BIMBA Site Agent installer.
+    profiles: ["test-scada"]            # Start with tools/test-scada-vm/start.ps1 (loads KVM first); screen: http://localhost:8006
+    image: dockurr/windows:6.05
+    hostname: test-scada
+    environment:
+      VERSION: "2022"                   # ignored: installs from the official evaluation ISO below (start.ps1 downloads it)
+      RAM_SIZE: "4G"
+      CPU_CORES: "4"
+      DISK_SIZE: "40G"
+      USERNAME: "bimba"
+      PASSWORD: ${BIMBA_TESTVM_PASSWORD:-bimba-test}
+    devices: [/dev/kvm, /dev/net/tun]
+    cap_add: [NET_ADMIN]
+    ports: ["127.0.0.1:8006:8006", "127.0.0.1:3389:3389/tcp"]   # browser screen + RDP, this PC only
+    volumes:
+      - test-scada-disk:/storage
+      - ./tools/test-scada-vm/iso/windows-server-2022-eval.iso:/boot.iso:ro   # Microsoft evaluation (180 days)
+      - ./tools/test-scada-vm/shared:/shared   # "Shared" on the VM desktop (drive Z:): installers
+    stop_grace_period: 2m
+    restart: "no"
+
 volumes:
+  test-scada-disk:
   gateway-data:
   kafka-data:
   es-spool:

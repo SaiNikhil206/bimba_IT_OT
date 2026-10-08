@@ -1,8 +1,6 @@
 package com.bimba.gateway.collect;
 
-import com.bimba.gateway.config.BimbaConfig;
 import com.bimba.gateway.config.TagModel;
-import com.bimba.gateway.delivery.DeliveryEngine;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
@@ -23,18 +21,22 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * Polls every device (one thread each) and turns every change of value or quality into a canonical
- * BIMBA message (docs/payload.md) for the delivery engine. A device that cannot be reached makes all of
- * its tags BAD (one message per tag) until it answers again.
+ * BIMBA message (docs/payload.md) for the sink (the gateway's delivery engine, or the edge collector's uplink to the
+ * site agent service). A device that cannot be reached makes all of its tags BAD (one message per tag) until it
+ * answers again. A device's connection settings may carry its own "pollMs".
  */
 public class Collector {
     private static final Logger log = LoggerFactory.getLogger("BIMBA.Collector");
     private static final MathContext DIGITS = new MathContext(12);
 
-    private final BimbaConfig cfg;
-    private final DeliveryEngine delivery;
+    private final String plantId;
+    private final String edgeId;
+    private final long pollMs;
+    private final Consumer<JsonObject> sink;
     private final String session = UUID.randomUUID().toString();
     private final AtomicLong seq = new AtomicLong();
     private final AtomicLong events = new AtomicLong();
@@ -42,10 +44,17 @@ public class Collector {
     private final List<TagModel.Tag> tags;
     private ScheduledExecutorService pool;
 
-    public Collector(BimbaConfig cfg, List<TagModel.Tag> tags, JsonObject sources, DeliveryEngine delivery) {
-        this.cfg = cfg;
+    /**
+     * @param sources {kind: {device: connection settings}}, kind = modbus | opcua
+     * @param sink    receives each canonical message; must not block
+     */
+    public Collector(String plantId, String edgeId, long pollMs, List<TagModel.Tag> tags, JsonObject sources,
+                     Consumer<JsonObject> sink) {
+        this.plantId = plantId;
+        this.edgeId = edgeId;
+        this.pollMs = pollMs;
         this.tags = tags;
-        this.delivery = delivery;
+        this.sink = sink;
         Map<String, List<TagModel.Tag>> groups = new LinkedHashMap<>();
         for (TagModel.Tag t : tags) {
             String key = t.kind() == TagModel.Kind.EXPRESSION ? "expression:" : t.kind().name().toLowerCase() + ":" + t.device();
@@ -60,9 +69,9 @@ public class Collector {
             t.setDaemon(true);
             return t;
         });
-        long every = Math.max(100, cfg.pollMs);
+        long every = Math.max(100, pollMs);
         for (Device d : devices) {
-            pool.scheduleWithFixedDelay(d::cycle, 0, every, TimeUnit.MILLISECONDS);
+            pool.scheduleWithFixedDelay(d::cycle, 0, d.pollMs > 0 ? Math.max(100, d.pollMs) : every, TimeUnit.MILLISECONDS);
         }
         log.info("polling {} tags on {} device(s) every {} ms", tags.size(), devices.size(), every);
     }
@@ -86,7 +95,7 @@ public class Collector {
         m.put("subscribedTags", tags.size());
         m.put("tagEvents", events.get());
         m.put("lastSeq", seq.get());
-        m.put("pollMs", cfg.pollMs);
+        m.put("pollMs", pollMs);
         TreeSet<String> machines = new TreeSet<>();
         tags.forEach(t -> machines.add(t.machine()));
         m.put("machines", List.copyOf(machines));
@@ -118,12 +127,14 @@ public class Collector {
         volatile Instant lastOk;
         volatile int good;
         volatile boolean wasDown;
+        final long pollMs;
 
         Device(String key, List<TagModel.Tag> tags, JsonObject sources) {
             this.kind = key.substring(0, key.indexOf(':'));
             this.name = key.substring(key.indexOf(':') + 1);
             this.tags = tags;
             JsonObject conn = section(sources, kind, name);
+            pollMs = conn != null && conn.has("pollMs") && conn.get("pollMs").isJsonPrimitive() ? conn.get("pollMs").getAsLong() : 0;
             Driver d = null;
             if (kind.equals("modbus") && conn != null) {
                 d = new ModbusDriver(conn);
@@ -208,7 +219,7 @@ public class Collector {
             }
             last.put(t.path(), new Object[]{value, quality});
             events.incrementAndGet();
-            delivery.offer(message(t, value, quality, r.detail(), at));
+            sink.accept(message(t, value, quality, r.detail(), at));
         }
 
         void close() {
@@ -221,6 +232,9 @@ public class Collector {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("kind", kind);
             m.put("name", name.isEmpty() ? "expressions" : name);
+            if (driver instanceof OpcUaDriver ua && ua.serverCertSha256() != null) {
+                m.put("serverCertSha256", ua.serverCertSha256());
+            }
             m.put("target", driver == null ? (kind.equals("expression") ? "computed in the gateway" : null) : driver.describe());
             m.put("connected", error == null && lastOk != null);
             m.put("tags", tags.size());
@@ -261,7 +275,7 @@ public class Collector {
         JsonObject m = new JsonObject();
         m.addProperty("schemaVersion", "1.0");
         m.addProperty("messageId", UUID.randomUUID().toString());
-        m.addProperty("plantId", cfg.plantId);
+        m.addProperty("plantId", plantId);
         m.addProperty("machineId", t.machine());
         m.addProperty("timestamp", at.toString());
         m.addProperty("tagName", t.name());
@@ -286,11 +300,11 @@ public class Collector {
         m.addProperty("category", "telemetry");
         JsonObject src = new JsonObject();
         src.addProperty("protocol", t.kind().name().toLowerCase());
-        src.addProperty("system", cfg.edgeId);
+        src.addProperty("system", edgeId);
         src.addProperty("address", t.kind() == TagModel.Kind.EXPRESSION ? t.path() : t.device() + "/" + t.address());
         m.add("source", src);
         JsonObject edge = new JsonObject();
-        edge.addProperty("edgeId", cfg.edgeId);
+        edge.addProperty("edgeId", edgeId);
         edge.addProperty("session", session);
         edge.addProperty("seq", seq.incrementAndGet());
         m.add("edge", edge);

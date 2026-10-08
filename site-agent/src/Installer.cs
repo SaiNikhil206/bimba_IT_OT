@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -94,6 +95,7 @@ namespace Bimba.SiteAgent
             {
                 // installed with the MSI: register again = new configuration + restart the service
                 if (ServiceStatus() != null) { progress("Stopping the running agent"); StopService(); }
+                ExtractEdge(progress);
                 progress("Saving the configuration");
                 SaveConfig(cfg);
                 progress("Starting the service");
@@ -115,6 +117,8 @@ namespace Bimba.SiteAgent
             if (!string.Equals(Path.GetFullPath(SelfPath), Path.GetFullPath(Paths.InstalledExe), StringComparison.OrdinalIgnoreCase))
                 File.Copy(SelfPath, Paths.InstalledExe, true);
 
+            ExtractEdge(progress);
+
             progress("Saving the configuration");
             SecureDataDir();
             cfg.Save();
@@ -123,7 +127,7 @@ namespace Bimba.SiteAgent
             string bin = $"\"\\\"{Paths.InstalledExe}\\\" service\"";
             string common = $"binPath= {bin} start= delayed-auto obj= \"NT AUTHORITY\\LocalService\" password= \"\" DisplayName= \"{Paths.DisplayName}\"";
             Sc((ServiceStatus() == null ? "create " : "config ") + Paths.ServiceName + " " + common);
-            Sc($"description {Paths.ServiceName} \"Registers this machine with its organization's BIMBA gateway and reports that it is online.\"");
+            Sc($"description {Paths.ServiceName} \"Registers this machine with its organization's BIMBA gateway, reports that it is online and sends the data of its SCADA sources.\"");
             Sc($"failure {Paths.ServiceName} reset= 86400 actions= restart/60000/restart/60000/restart/300000");
 
             RegisterUninstall();
@@ -181,6 +185,45 @@ namespace Bimba.SiteAgent
                 }
             }
             if (!done) Log.Warn("the gateway was not told about the removal; the machine shows as offline there until it is revoked");
+        }
+
+        /// <summary>
+        /// Unpacks the edge collector (Java runtime + OPC UA / Modbus drivers, embedded in this exe as edge.zip) into
+        /// Program Files\BIMBA Site Agent\edge. Returns false for a build without it (registration-only agent).
+        /// </summary>
+        public static bool ExtractEdge(Action<string> progress)
+        {
+            using (var zip = typeof(Installer).Assembly.GetManifestResourceStream("edge.zip"))
+            {
+                if (zip == null)
+                {
+                    Log.Warn("this build carries no edge collector: the machine registers but collects no data");
+                    return false;
+                }
+                progress("Installing the edge collector (data collection)");
+                EdgeProcess.KillStray();
+                string target = Paths.EdgeDir, fresh = target + ".new";
+                if (Directory.Exists(fresh)) Directory.Delete(fresh, true);
+                using (var archive = new ZipArchive(zip, ZipArchiveMode.Read))
+                    archive.ExtractToDirectory(fresh);
+                if (Directory.Exists(target)) Directory.Delete(target, true);
+                Directory.Move(fresh, target);
+                return true;
+            }
+        }
+
+        /// <summary>MSI uninstall: the edge collector files are not Windows Installer's (they were unpacked by the exe)</summary>
+        public static void RemoveEdge()
+        {
+            try
+            {
+                EdgeProcess.KillStray();
+                if (Directory.Exists(Paths.EdgeDir)) Directory.Delete(Paths.EdgeDir, true);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("could not delete " + Paths.EdgeDir + ": " + e.Message);
+            }
         }
 
         /// <summary>Deletes the configuration and logs (ProgramData).</summary>

@@ -9,10 +9,10 @@
     <AssemblyName>BIMBA-Site-Agent-Setup</AssemblyName>
     <RootNamespace>Bimba.SiteAgent</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Product>BIMBA Site Agent</Product>
     <Company>BIMBA</Company>
-    <Description>Registers this machine with its organization on the BIMBA Gateway</Description>
+    <Description>Registers this machine with its organization on the BIMBA Gateway and sends its SCADA data</Description>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -20,11 +20,17 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Management" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Security" />
     <Reference Include="System.ServiceProcess" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <!-- edge collector (jlink Java runtime + bimba-gateway/edge jars), zipped by scripts/build-site-agent.ps1 -->
+  <ItemGroup Condition="Exists('edge\edge.zip')">
+    <EmbeddedResource Include="edge\edge.zip" LogicalName="edge.zip" />
   </ItemGroup>
 </Project>

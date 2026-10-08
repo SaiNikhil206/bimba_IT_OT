@@ -1,5 +1,6 @@
 # Builds the BIMBA Site Agent into site-agent/dist:
-#   BIMBA-Site-Agent-Setup.exe   setup wizard + silent installer + Windows service (.NET Framework 4.8, no extra runtime)
+#   BIMBA-Site-Agent-Setup.exe   setup wizard + silent installer + Windows service (.NET Framework 4.8, no extra runtime);
+#                                carries the edge collector (Java 17 runtime + OPC UA / Modbus drivers) as edge.zip
 #   BIMBA-Site-Agent.msi         for Intune / SCCM / Group Policy (WiX Toolset 5, restored from NuGet on first build)
 #   release.json                 version, SHA-256 and signer of both files (shown in the gateway console)
 # The gateway serves this folder for "Download installer" (docker-compose mounts it at /installers).
@@ -13,7 +14,8 @@
 # Without signing settings the files are built unsigned (development; Windows SmartScreen warns about them).
 # A test certificate for trying the pipeline: scripts/new-test-signing-cert.ps1
 param(
-    [switch]$RequireSigning     # fail instead of building unsigned (use in release builds)
+    [switch]$RequireSigning,    # fail instead of building unsigned (use in release builds)
+    [switch]$SkipEdge           # reuse site-agent/edge/edge.zip from the previous build
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -52,6 +54,38 @@ function Sign-File([string]$path) {
     & $signtool.FullName @a $path | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "signing $path failed (signtool exit $LASTEXITCODE)" }
 }
+
+# ------------------------------------------------------------------ edge collector (embedded in the exe as edge.zip)
+# Jars: bimba-gateway/edge (gradle :edge:edgeDist, run in the gateway's Gradle image, so no local Gradle is needed).
+# Runtime: jlink of a Windows JDK 17+ (BIMBA_JDK, else JAVA_HOME, else a Gradle-provisioned Temurin 17), trimmed to the
+# modules the edge needs (about 45 MB unpacked).
+$edgeOut = Join-Path $agent "edge"
+$edgeZip = Join-Path $edgeOut "edge.zip"
+if (-not $SkipEdge) {
+    $gw = Join-Path $root "bimba-gateway"
+    Write-Host "edge collector: building jars"
+    docker run --rm -v "${gw}:/src" -v bimba-gradle-cache:/home/gradle/.gradle -w /src gradle:9.2-jdk21 gradle :edge:edgeDist --no-daemon -q
+    if ($LASTEXITCODE -ne 0) { throw "edge collector build failed" }
+    $jdk = @($env:BIMBA_JDK, $env:JAVA_HOME) + @(Get-ChildItem "$env:USERPROFILE\.gradle\jdks" -Directory -Filter "*17*windows*" -ErrorAction SilentlyContinue | ForEach-Object FullName) |
+        Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\jlink.exe")) -and (Test-Path (Join-Path $_ "jmods")) } | Select-Object -First 1
+    if (-not $jdk) { throw "no Windows JDK 17+ with jlink found: set BIMBA_JDK" }
+    $stage = Join-Path $edgeOut "stage"
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    New-Item -ItemType Directory -Force $stage | Out-Null
+    Write-Host "edge collector: Java runtime from $jdk"
+    $modules = "java.base,java.compiler,java.desktop,java.logging,java.management,java.naming,java.sql,jdk.crypto.ec,jdk.unsupported"
+    & (Join-Path $jdk "bin\jlink.exe") --add-modules $modules --strip-debug --no-header-files --no-man-pages --compress=2 `
+        --output (Join-Path $stage "runtime")
+    if ($LASTEXITCODE -ne 0) { throw "jlink failed" }
+    Copy-Item (Join-Path $gw "edge\build\edge\lib") (Join-Path $stage "lib") -Recurse
+    [IO.File]::WriteAllText((Join-Path $stage "version.txt"), $version, (New-Object Text.UTF8Encoding $false))
+    if (Test-Path $edgeZip) { Remove-Item $edgeZip -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::CreateFromDirectory($stage, $edgeZip, [IO.Compression.CompressionLevel]::Optimal, $false)
+    Remove-Item $stage -Recurse -Force
+    Write-Host ("edge collector: {0:N1} MB" -f ((Get-Item $edgeZip).Length / 1MB))
+}
+if (-not (Test-Path $edgeZip)) { Write-Warning "no edge.zip: the agent is built without data collection" }
 
 # ------------------------------------------------------------------ build
 Write-Host "BIMBA Site Agent $version"

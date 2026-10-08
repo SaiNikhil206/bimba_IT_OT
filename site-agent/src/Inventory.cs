@@ -58,6 +58,7 @@ namespace Bimba.SiteAgent
                 ["primaryIp"] = PrimaryIp(serverUrl),
                 ["timezone"] = TimeZoneInfo.Local.Id,
                 ["scada"] = Scada(),
+                ["dataSources"] = Safe(() => (object)Discovery.All(), null),   // suggested in the console's "Add data source"
                 ["agentVersion"] = Version,
                 ["collectedAt"] = DateTime.UtcNow.ToString("o"),
             };

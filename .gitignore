@@ -16,13 +16,20 @@ ignition/bimba/console-sources.json
 site-agent/bin/
 site-agent/obj/
 site-agent/dist/
+site-agent/edge/
 site-agent/installer/bin/
 site-agent/installer/obj/
 site-agent/*.cer
 *.local.txt
 # BIMBA Gateway build output (Gradle, Vite)
 bimba-gateway/build/
+bimba-gateway/*/build/
+bimba-gateway/bin/
 bimba-gateway/.gradle/
 bimba-gateway/src/main/resources/static/
 bimba-gateway/ui/node_modules/
 bimba-gateway/ui/dist/
+
+# test SCADA VM: installers copied into the VM share
+tools/test-scada-vm/shared/
+tools/test-scada-vm/iso/

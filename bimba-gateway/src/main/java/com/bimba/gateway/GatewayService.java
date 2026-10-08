@@ -47,6 +47,8 @@ public class GatewayService {
     private volatile String configError;
     private volatile List<String> tagProblems = List.of();
     private volatile String stamp = "";
+    /** machines + tags collected by site agents (edge collectors), merged into the collector status */
+    private volatile java.util.function.Supplier<List<Map<String, Object>>> agentTags = List::of;
 
     public GatewayService(@Value("${bimba.config-dir:config}") File configDir, @Value("${bimba.data-dir:data}") File dataDir,
                           DestinationStore destinations, Db db) {
@@ -66,6 +68,10 @@ public class GatewayService {
         return delivery;
     }
 
+    public void setAgentTags(java.util.function.Supplier<List<Map<String, Object>>> supplier) {
+        agentTags = supplier;
+    }
+
     public File configFile() {
         return configFile;
     }
@@ -82,6 +88,12 @@ public class GatewayService {
             t.setDaemon(true);
             return t;
         });
+        try {
+            // OPC UA client certificate for signed/encrypted policies (servers trust it once)
+            com.bimba.gateway.collect.OpcUaPki.configure(new File(dataDir, "pki"), "BIMBA Gateway", "urn:bimba:gateway");
+        } catch (Exception e) {
+            log.warn("OPC UA client certificate unavailable (only security policy None works): {}", e.toString());
+        }
         reload();
         destinations.onChange(() -> scheduler.execute(this::reload));
         scheduler.scheduleWithFixedDelay(this::watch, 5, 5, TimeUnit.SECONDS);
@@ -128,7 +140,7 @@ public class GatewayService {
             problems.forEach(p -> log.warn("tag tree: {}", p));
             delivery = new DeliveryEngine(next, dataDir, db);
             delivery.start();
-            collector = new Collector(next, tags, sources, delivery);
+            collector = new Collector(next.plantId, next.edgeId, next.pollMs, tags, sources, delivery::offer);
             collector.start();
             configError = null;
             log.info("BIMBA Gateway running: plant={} edge={} tags={}", next.plantId, next.edgeId, tags.size());
@@ -202,8 +214,39 @@ public class GatewayService {
         }
         Collector col = collector;
         DeliveryEngine del = delivery;
-        m.put("collector", col == null ? null : col.status());
+        m.put("collector", withAgents(col == null ? null : col.status()));
         m.put("delivery", del == null ? null : del.status());
+        return m;
+    }
+
+    /**
+     * Adds the site agents' machines and tags to the collector status ("machines", "tags"), so the Overview, the
+     * pipeline selections and the Organizations page treat them like the gateway's own; "agentMachines" lists them.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> withAgents(Map<String, Object> status) {
+        List<Map<String, Object>> extra = agentTags.get();
+        if (extra.isEmpty()) {
+            return status;
+        }
+        Map<String, Object> m = status == null ? new LinkedHashMap<>() : new LinkedHashMap<>(status);
+        java.util.TreeSet<String> machines = new java.util.TreeSet<>();
+        if (m.get("machines") instanceof List<?> l) {
+            l.forEach(x -> machines.add(String.valueOf(x)));
+        }
+        List<Map<String, Object>> tags = new ArrayList<>();
+        if (m.get("tags") instanceof List<?> l) {
+            l.forEach(x -> tags.add((Map<String, Object>) x));
+        }
+        java.util.TreeSet<String> agentMachines = new java.util.TreeSet<>();
+        for (Map<String, Object> t : extra) {
+            agentMachines.add(String.valueOf(t.get("machine")));
+            tags.add(t);
+        }
+        machines.addAll(agentMachines);
+        m.put("machines", List.copyOf(machines));
+        m.put("tags", tags);
+        m.put("agentMachines", List.copyOf(agentMachines));
         return m;
     }
 }

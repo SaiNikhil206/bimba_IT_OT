@@ -12,6 +12,8 @@ RUN npm run build
 FROM gradle:9.2-jdk21 AS build
 WORKDIR /src
 COPY settings.gradle build.gradle ./
+COPY collect-lib ./collect-lib
+COPY edge/build.gradle ./edge/build.gradle
 COPY src ./src
 COPY --from=ui /ui/dist ./src/main/resources/static
 RUN --mount=type=cache,target=/home/gradle/.gradle gradle bootJar --no-daemon -q

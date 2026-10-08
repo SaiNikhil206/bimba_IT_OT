@@ -34,6 +34,7 @@ namespace Bimba.SiteAgent
         private Label serverNote;
         private CheckBox trustCert;
         private string untrustedCert;
+        private string checkedPin;      // certificate pin the gateway check succeeded with (used for the install itself)
         private bool gatewayChecked;
 
         // sign in
@@ -308,14 +309,16 @@ namespace Bimba.SiteAgent
                 return false;
             }
             if (gatewayChecked) return true;
-            string pin = trustCert.Visible && trustCert.Checked ? untrustedCert : Preset.PinFor(url);
+            // not trustCert.Visible: a control on a hidden wizard page reports Visible = false
+            string pin = trustCert.Checked && untrustedCert != null ? untrustedCert : Preset.PinFor(url);
             Note(serverNote, "Connecting to " + url + " …", Muted);
             busy = true;
             next.Enabled = false;
             try
             {
                 await Task.Run(() => { using (var c = new GatewayClient(url, pin)) c.Check(); });
-                server.Text = url;
+                if (server.Text != url) server.Text = url;     // (TextChanged clears the trust choice, so set the pin after it)
+                checkedPin = pin;
                 gatewayChecked = true;
                 Note(serverNote, GatewayClient.IsPlainHttpToRemote(url)
                     ? "Connected. Warning: this is plain HTTP, so the token or password travels unencrypted. Prefer the gateway's HTTPS address (port 8443)."
@@ -407,7 +410,7 @@ namespace Bimba.SiteAgent
                 if (org.Visible && org.SelectedValue != null) auth["org"] = org.SelectedValue.ToString();
             }
             string url = server.Text, name = displayName.Text.Trim(), where = site.Text.Trim();
-            string pin = trustCert.Visible && trustCert.Checked ? untrustedCert : Preset.PinFor(url);
+            string pin = checkedPin;
             progress.Items.Clear();
             installNote.Text = "Installing…";
             installNote.ForeColor = SystemColors.ControlText;

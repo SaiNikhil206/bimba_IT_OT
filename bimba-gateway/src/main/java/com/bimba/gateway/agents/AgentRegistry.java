@@ -203,7 +203,7 @@ public class AgentRegistry {
     public record Caller(String agentId, String secret, X509Certificate cert, boolean secure) {
     }
 
-    private record Agent(UUID id, long orgId, String orgSlug, int heartbeatSeconds, String certSha256,
+    record Agent(UUID id, long orgId, String orgSlug, int heartbeatSeconds, String certSha256,
                          Timestamp certNotAfter, boolean viaCertificate) {
     }
 
@@ -212,7 +212,7 @@ public class AgentRegistry {
      * (old certificate, or the secret right after the first certificate) stays valid until the new certificate is first
      * used, so a lost answer cannot lock the machine out.
      */
-    private Agent authenticate(Caller c) throws ApiError {
+    Agent authenticate(Caller c) throws ApiError {
         String sha = null;
         UUID id = null;
         if (c.cert() != null) {
@@ -282,6 +282,11 @@ public class AgentRegistry {
             event(orgId, id, "uninstalled", "agent", remoteIp, Map.of());
             return Map.of("ok", true, "state", "uninstalled");
         }
+        JsonObject collector = obj(body, "collector");
+        if (collector != null) {
+            // edge collector status (sources connected, readings sent, buffer): shown on the machine's page
+            db.sql("UPDATE {s}.bimba_agent SET collector = ?::jsonb WHERE id = ?").params(collector.toString(), id).update();
+        }
         JsonObject machine = obj(body, "machine");
         if (machine == null) {
             db.sql("UPDATE {s}.bimba_agent SET last_seen = now(), remote_ip = ? WHERE id = ?").params(nz(remoteIp), id).update();
@@ -294,6 +299,7 @@ public class AgentRegistry {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", true);
+        out.put("agentId", id.toString());
         out.put("heartbeatSeconds", a.heartbeatSeconds());
         // an agent without a certificate is asked to get one (only over HTTPS: mutual TLS needs it)
         out.put("certificateWanted", a.certSha256().isEmpty() && caller.secure() && settings().issueCertificates && AgentCa.ready());

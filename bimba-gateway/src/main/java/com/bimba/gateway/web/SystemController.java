@@ -3,15 +3,18 @@ package com.bimba.gateway.web;
 import com.bimba.gateway.Db;
 import com.bimba.gateway.GatewayService;
 import com.bimba.gateway.agents.AgentRegistry;
+import com.bimba.gateway.agents.AgentSources;
 import com.bimba.gateway.config.BimbaConfig;
 import com.bimba.gateway.security.SecurityService.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.DeferredResult;
 
 import java.security.cert.X509Certificate;
 import java.util.LinkedHashMap;
@@ -26,17 +29,23 @@ import java.util.Map;
  *   POST /system/bimba-agent-heartbeat   agent service: client certificate (mutual TLS) or, until it has one,
  *                                        Bearer agent secret + X-BIMBA-Agent id (+ refreshed details)
  *   POST /system/bimba-agent-certificate agent service: first client certificate / renewal (body {csr})
+ *   GET  /system/bimba-agent-config      edge collector: the data sources to read (answer carries "version")
+ *   POST /system/bimba-agent-commands    edge collector: long-poll for the next console command (204 = none)
+ *   POST /system/bimba-agent-commands/{id}/result   the command's answer {ok, result | error}
+ *   POST /system/bimba-agent-readings    edge collector: {messages:[canonical messages]} -> delivery
  * </pre>
  */
 @RestController
 public class SystemController {
     private final GatewayService gateway;
     private final AgentRegistry agents;
+    private final AgentSources sources;
     private final Db db;
 
-    public SystemController(GatewayService gateway, AgentRegistry agents, Db db) {
+    public SystemController(GatewayService gateway, AgentRegistry agents, AgentSources sources, Db db) {
         this.gateway = gateway;
         this.agents = agents;
+        this.sources = sources;
         this.db = db;
     }
 
@@ -73,7 +82,47 @@ public class SystemController {
                                   @RequestHeader(value = "Authorization", required = false) String auth)
             throws ApiException, AgentRegistry.ApiError {
         ready(req);
-        return agents.heartbeat(caller(req, agentId, auth), ApiErrors.parse(body), req.getRemoteAddr());
+        Map<String, Object> out = new LinkedHashMap<>(agents.heartbeat(caller(req, agentId, auth), ApiErrors.parse(body), req.getRemoteAddr()));
+        if (out.get("agentId") instanceof String id) {
+            out.put("configVersion", sources.version(id));       // the edge collector fetches its config when this changes
+        }
+        return out;
+    }
+
+    @GetMapping("/system/bimba-agent-config")
+    Map<String, Object> agentConfig(HttpServletRequest req,
+                                    @RequestHeader(value = "X-BIMBA-Agent", required = false) String agentId,
+                                    @RequestHeader(value = "Authorization", required = false) String auth)
+            throws ApiException, AgentRegistry.ApiError {
+        ready(req);
+        return sources.config(caller(req, agentId, auth));
+    }
+
+    @PostMapping("/system/bimba-agent-commands")
+    DeferredResult<ResponseEntity<Object>> agentCommands(HttpServletRequest req,
+                                                         @RequestHeader(value = "X-BIMBA-Agent", required = false) String agentId,
+                                                         @RequestHeader(value = "Authorization", required = false) String auth)
+            throws ApiException, AgentRegistry.ApiError {
+        ready(req);
+        return sources.nextCommand(caller(req, agentId, auth));
+    }
+
+    @PostMapping("/system/bimba-agent-commands/{id}/result")
+    Map<String, Object> agentCommandResult(@PathVariable String id, @RequestBody(required = false) String body, HttpServletRequest req,
+                                           @RequestHeader(value = "X-BIMBA-Agent", required = false) String agentId,
+                                           @RequestHeader(value = "Authorization", required = false) String auth)
+            throws ApiException, AgentRegistry.ApiError {
+        ready(req);
+        return sources.commandResult(caller(req, agentId, auth), id, ApiErrors.parse(body));
+    }
+
+    @PostMapping("/system/bimba-agent-readings")
+    Map<String, Object> agentReadings(@RequestBody(required = false) String body, HttpServletRequest req,
+                                      @RequestHeader(value = "X-BIMBA-Agent", required = false) String agentId,
+                                      @RequestHeader(value = "Authorization", required = false) String auth)
+            throws ApiException, AgentRegistry.ApiError {
+        ready(req);
+        return sources.readings(caller(req, agentId, auth), ApiErrors.parse(body), req.getRemoteAddr());
     }
 
     /** first certificate (with the agent secret) or renewal (with the current certificate); body {csr} */

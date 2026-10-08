@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
  * C&lt;n&gt; coil, DI&lt;n&gt; discrete input; optional "&lt;unit&gt;." prefix overrides the unit id. Numbers are
  * 1-based unless the connection has zeroBased=true (same convention as the Settings page and its tests).
  */
-final class ModbusDriver implements Driver {
+public final class ModbusDriver implements Driver {
     private static final Pattern ADDR = Pattern.compile("^(?:(\\d+)\\.)?(HR|IR|C|DI)(\\d+)$", Pattern.CASE_INSENSITIVE);
 
     private final String host;
@@ -26,7 +26,7 @@ final class ModbusDriver implements Driver {
     private final boolean zeroBased;
     private ModbusTCPMaster master;
 
-    ModbusDriver(JsonObject conn) {
+    public ModbusDriver(JsonObject conn) {
         host = str(conn, "host", "localhost");
         port = (int) num(conn, "port", 502);
         unitId = (int) num(conn, "unitId", 1);

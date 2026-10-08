@@ -74,7 +74,12 @@ namespace Bimba.SiteAgent
                         return 0;
                     case "remove-data":
                         if (!Installer.IsElevated) return NotElevated();
+                        Installer.RemoveEdge();
                         Installer.RemoveData();
+                        return 0;
+                    case "install-edge":        // MSI: unpack the edge collector next to the installed exe
+                        if (!Installer.IsElevated) return NotElevated();
+                        Installer.ExtractEdge(s => Console.WriteLine("  " + s));
                         return 0;
                     case "uninstall":
                         if (!Installer.IsElevated) return NotElevated();
