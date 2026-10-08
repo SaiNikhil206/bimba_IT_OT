@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, usePoll, useToast } from "../ui.jsx";
+import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, usePoll, useRecordAddress, useToast } from "../ui.jsx";
 
 // Organizations (platform admins): the tenants of this gateway and which organization gets each machine's readings.
 // Each organization has its own users and roles, destinations, pipelines, site agents and audit log; one account can
@@ -13,12 +13,13 @@ export default function Organizations() {
   const toast = useToast();
   const navigate = useNavigate();
   const { data, error, reload } = usePoll("orgs", 0);
-  const [editing, setEditing] = useState(null);       // null | "new" | org
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(null);
   const [problem, setProblem] = useState(null);
 
   const orgs = data?.organizations ?? [];
+  const rec = useRecordAddress("/organizations", data?.organizations, "organization");
+  const editing = rec.record;                          // null | "new" | org
   const machines = data?.machines ?? [];
   const byId = Object.fromEntries(orgs.map((o) => [o.id, o]));
   const def = byId[data?.defaultOrgId];
@@ -40,7 +41,7 @@ export default function Organizations() {
   const open = async (o) => {
     try {
       if (o.id !== s.org?.id) await s.switchOrg(o.id);
-      navigate("/users");
+      navigate(`/${o.slug}/users`);
       toast(`You are working in ${o.name}.`);
     } catch (e) {
       setProblem(e.message);
@@ -50,7 +51,7 @@ export default function Organizations() {
   return (
     <>
       <PageHeader title="Organizations" subtitle="Every organization has its own users, roles, destinations, pipelines, site agents and audit log. One account can belong to several.">
-        <button className="btn" onClick={() => setEditing("new")}>New organization</button>
+        <button className="btn" onClick={() => rec.open("new")}>New organization</button>
       </PageHeader>
       <Msg>{error || problem}</Msg>
       <Card flush>
@@ -60,7 +61,7 @@ export default function Organizations() {
             {!data && <Empty cols={7}>Loading…</Empty>}
             {data && orgs.length === 0 && <Empty cols={7}>No organization yet. Create the first one.</Empty>}
             {orgs.map((o) => (
-              <tr key={o.id}>
+              <tr key={o.id} {...rec.mark(o)}>
                 <td>
                   <b>{o.name}</b> {o.default && <span className="chip accent" title="Gets the machines nobody assigned">Default</span>}
                   {o.id === s.org?.id && <span className="chip">You are working here</span>}
@@ -74,7 +75,7 @@ export default function Organizations() {
                 <td className="r">
                   <div className="row-acts">
                     <button className="btn ghost sm" onClick={() => open(o)} title="Switch to this organization and manage its users">Open users</button>
-                    <button className="btn ghost sm" onClick={() => setEditing(o)}>Rename</button>
+                    <button className="btn ghost sm" onClick={() => rec.open(o)}>Rename</button>
                     {!o.default && (
                       <button className="btn ghost sm" disabled={busy === `d${o.id}`}
                               onClick={() => run(`d${o.id}`, () => api("orgs/default", { method: "PUT", body: { orgId: o.id } }), `${o.name} now gets the unassigned machines.`)}>
@@ -114,8 +115,8 @@ export default function Organizations() {
       </Card>
 
       {editing && (
-        <OrgDialog org={editing === "new" ? null : editing} onClose={() => setEditing(null)}
-                   onSaved={async (msg) => { setEditing(null); toast(msg); await reload(); await s.reload(); }} />
+        <OrgDialog org={editing === "new" ? null : editing} onClose={rec.close}
+                   onSaved={async (msg) => { rec.close(); toast(msg); await reload(); await s.reload(); }} />
       )}
       {deleting && (
         <Confirm title={`Delete ${deleting.name}?`} danger confirm="Delete organization"

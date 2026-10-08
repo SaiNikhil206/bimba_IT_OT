@@ -1,6 +1,8 @@
 """BIMBA data model (PostgreSQL). Shared by both end systems:
 BIMBA Ingest (Django) writes through the API/MQTT ingest, Boomi writes via SELECT bimba_ingest(...).
 Rows are created by the bimba_ingest() SQL function, so the timestamp defaults are also set in the DB (DEFAULT now(), see migration 0001)."""
+import uuid
+
 from django.db import models
 from django.utils import timezone
 
@@ -89,6 +91,7 @@ class IngestBatch(models.Model):
 
 
 class Organization(models.Model):
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)   # public id in the gateway console's addresses
     slug = models.SlugField(max_length=64, unique=True)
     name = models.CharField(max_length=200)
     created_at = models.DateTimeField(default=timezone.now)
@@ -208,6 +211,7 @@ class GatewayRole(models.Model):
     """org NULL = built-in role shared by every organization; otherwise a custom role of that organization.
     Names are unique per organization (index bimba_gw_role_org_lower_name)."""
     org = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.CASCADE, related_name="+")
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)   # public id in the gateway console's addresses
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=300, blank=True, default="")
     permissions = models.JSONField(default=list)            # e.g. ["gateway.view", "agents.view"]
@@ -235,6 +239,7 @@ class GatewayUserRole(models.Model):
 
 class GatewayUserProfile(models.Model):
     user = models.OneToOneField("auth.User", on_delete=models.CASCADE, primary_key=True, related_name="gateway_profile")
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)   # the user's public id in the gateway console's addresses
     must_change_password = models.BooleanField(default=False)
     password_changed_at = models.DateTimeField(null=True, blank=True)
     failed_logins = models.IntegerField(default=0)
@@ -284,6 +289,7 @@ class GatewayDestination(models.Model):
     destination as the gateway reads it (role, enabled, transport, url, ...); secrets in it are encrypted by the
     gateway ("enc:v1:...") with a key only the gateway has. Names are unique per organization."""
     org = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="+")
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)   # public id in the gateway console's addresses
     name = models.CharField(max_length=64)
     service = models.CharField(max_length=40, blank=True, default="")    # catalog entry, e.g. "confluent-cloud"
     position = models.IntegerField(default=0)                             # delivery order
@@ -316,6 +322,7 @@ class GatewayPipeline(models.Model):
     "secondary": [ids, in the order they are tried], "mirrors": [ids]}. Destinations get data only through a pipeline.
     A pipeline only carries machines of its own organization and only uses that organization's destinations."""
     org = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="+")
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)   # public id in the gateway console's addresses
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=300, blank=True, default="")
     active = models.BooleanField(default=False)

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useSession } from "../session.jsx";
-import { Card, Empty, full, Msg, PageHeader, Status, usePoll, Verdict, when } from "../ui.jsx";
+import { Card, Empty, full, Msg, PageHeader, Status, useOrgPath, usePoll, Verdict, when } from "../ui.jsx";
 
 // Is the gateway collecting and delivering this organization's machine data? Refreshes every 10 s (background: does not
 // keep the session alive). Organization users see their machines, the devices serving them and their pipelines;
@@ -23,6 +23,7 @@ export default function Overview() {
 }
 
 function Body({ st, org, whole }) {
+  const at = useOrgPath();
   const col = st.collector || { devices: [], machines: [] };
   const del = st.delivery || { destinations: [], pipelines: [] };
   const pipes = del.pipelines ?? [];
@@ -64,7 +65,7 @@ function Body({ st, org, whole }) {
           </tbody>
         </table>
       </Card>
-      <Card title="Pipelines" flush action={<Link className="btn ghost sm" to="/pipelines">Manage pipelines</Link>}>
+      <Card title="Pipelines" flush action={<Link className="btn ghost sm" to={at("/pipelines")}>Manage pipelines</Link>}>
         <table>
           <thead><tr><th>Pipeline</th><th>Machines</th><th>Delivering to</th><th>Mirrors</th><th>On disk</th></tr></thead>
           <tbody>

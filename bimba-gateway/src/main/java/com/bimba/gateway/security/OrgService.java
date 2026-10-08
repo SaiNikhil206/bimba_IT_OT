@@ -30,6 +30,13 @@ import java.util.regex.Pattern;
 public class OrgService {
     public static final String DEFAULT_ORG = "machines.default_org";
     private static final Pattern SLUG = Pattern.compile("^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$");
+    /**
+     * The console's addresses start with the organization's slug (/northwind-water/pipelines), next to addresses of no
+     * organization (web/SpaController.java) and the server's own paths: a slug may not be one of their first segments.
+     */
+    public static final java.util.Set<String> RESERVED = java.util.Set.of("overview", "agents", "pipelines", "destinations", "delivery",
+            "users", "roles", "audit", "profile", "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system",
+            "actuator", "assets", "static", "index", "new", "admin", "settings", "help");
 
     private final Db db;
 
@@ -37,10 +44,12 @@ public class OrgService {
         this.db = db;
     }
 
-    public record Org(long id, String slug, String name) {
+    /** uid: the public id in the console's addresses (/organizations/<uid>) */
+    public record Org(long id, String uid, String slug, String name) {
         public Map<String, Object> json() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
+            m.put("uid", uid);
             m.put("slug", slug);
             m.put("name", name);
             return m;
@@ -77,13 +86,13 @@ public class OrgService {
     }
 
     public List<Org> all() {
-        return db.sql("SELECT id, slug, name FROM {s}.bimba_org ORDER BY lower(name), id")
-                .query((rs, n) -> new Org(rs.getLong(1), rs.getString(2), rs.getString(3))).list();
+        return db.sql("SELECT id, uid, slug, name FROM {s}.bimba_org ORDER BY lower(name), id")
+                .query((rs, n) -> new Org(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4))).list();
     }
 
     public Org get(long id) throws ApiException {
-        return db.sql("SELECT id, slug, name FROM {s}.bimba_org WHERE id = ?").param(id)
-                .query((rs, n) -> new Org(rs.getLong(1), rs.getString(2), rs.getString(3))).optional()
+        return db.sql("SELECT id, uid, slug, name FROM {s}.bimba_org WHERE id = ?").param(id)
+                .query((rs, n) -> new Org(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4))).optional()
                 .orElseThrow(() -> new ApiException(404, "not_found", "Organization not found."));
     }
 
@@ -98,11 +107,12 @@ public class OrgService {
                         + " (SELECT count(*) FROM {s}.bimba_gw_destination d WHERE d.org_id = o.id),"
                         + " (SELECT count(*) FROM {s}.bimba_gw_pipeline p WHERE p.org_id = o.id),"
                         + " (SELECT count(*) FROM {s}.bimba_gw_pipeline p WHERE p.org_id = o.id AND p.active),"
-                        + " (SELECT count(*) FROM {s}.bimba_agent a WHERE a.org_id = o.id AND a.state = 'active')"
+                        + " (SELECT count(*) FROM {s}.bimba_agent a WHERE a.org_id = o.id AND a.state = 'active'), o.uid"
                         + " FROM {s}.bimba_org o ORDER BY lower(o.name), o.id")
                 .query((rs, n) -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", rs.getLong(1));
+                    m.put("uid", rs.getString(11));
                     m.put("slug", rs.getString(2));
                     m.put("name", rs.getString(3));
                     Timestamp t = rs.getTimestamp(4);
@@ -127,13 +137,17 @@ public class OrgService {
         if (!SLUG.matcher(s).matches()) {
             throw new ApiException(400, "slug", "The short name uses lower-case letters, digits and - (up to 64), e.g. acme-water.");
         }
+        if (RESERVED.contains(s)) {
+            throw new ApiException(400, "slug", "The short name " + s + " is used by the console's own addresses. Choose another one.");
+        }
         try {
-            long id = db.sql("INSERT INTO {s}.bimba_org (slug, name, created_at) VALUES (?, ?, now()) RETURNING id")
-                    .params(s, n).query(Long.class).single();
+            String uid = java.util.UUID.randomUUID().toString();
+            long id = db.sql("INSERT INTO {s}.bimba_org (slug, name, created_at, uid) VALUES (?, ?, now(), ?::uuid) RETURNING id")
+                    .params(s, n, uid).query(Long.class).single();
             if (defaultOrgId() == null || all().size() == 1) {
                 setDefault(id);
             }
-            return new Org(id, s, n);
+            return new Org(id, uid, s, n);
         } catch (DuplicateKeyException e) {
             throw new ApiException(409, "exists", "An organization with the short name " + s + " already exists.");
         }

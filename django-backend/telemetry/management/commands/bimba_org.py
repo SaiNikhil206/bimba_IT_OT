@@ -7,6 +7,11 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from telemetry.agents import create_token
+
+# first segments of the gateway console's addresses (/northwind-water/pipelines); same list as OrgService.RESERVED (Java)
+RESERVED_SLUGS = {"overview", "agents", "pipelines", "destinations", "delivery", "users", "roles", "audit", "profile",
+                  "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system", "actuator",
+                  "assets", "static", "index", "new", "admin", "settings", "help"}
 from telemetry.models import (Agent, GatewayPipeline, GatewayRole, GatewayUserProfile, GatewayUserRole, Organization,
                               OrgMember)
 
@@ -78,6 +83,8 @@ class Command(BaseCommand):
         if not slug:
             raise CommandError("organization slug required")
         if action == "create":
+            if slug in RESERVED_SLUGS:
+                raise CommandError(f"{slug} is used by the gateway console's own addresses; choose another slug")
             org, created = Organization.objects.get_or_create(slug=slug, defaults={"name": value or slug})
             self.stdout.write(f"organization {org.slug} ({org.name}) {'created' if created else 'already exists'}")
             return

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
 import { Brand, PasswordInput } from "../ui.jsx";
@@ -7,6 +7,7 @@ import { Brand, PasswordInput } from "../ui.jsx";
 export default function Login() {
   const s = useSession();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [caps, setCaps] = useState(false);
@@ -27,7 +28,8 @@ export default function Login() {
     try {
       const r = await api("login", { method: "POST", body: { email, password } });
       s.signedIn(r.user, r.organizations);
-      navigate("/", { replace: true });
+      // opened from a shared link (/pipelines?org=...): stay on that address, the console shows that page
+      if (location.pathname === "/login") navigate("/", { replace: true });
     } catch (err) {
       setMsg({ kind: err.code === "locked" ? "warn" : "bad", text: err.message });
       setPassword("");

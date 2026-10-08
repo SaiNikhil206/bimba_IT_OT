@@ -41,7 +41,7 @@ public class DestinationService {
             "database", List.of());
     private static final Set<String> FORMATS = Set.of("envelope", "ndjson", "json-array", "splunk-hec", "elastic-bulk", "influx-line");
     /** keys this editor owns; any other key of a destination is kept when it is saved */
-    private static final Set<String> MANAGED = new HashSet<>(List.of("id", "name", "service", "role", "enabled", "transport", "timeoutMs",
+    private static final Set<String> MANAGED = new HashSet<>(List.of("id", "uid", "name", "service", "role", "enabled", "transport", "timeoutMs",
             "retryAfterSeconds", "status", "usedBy", "live", "tlsInfo", "healthCheck", "maxRetryAfterSeconds", "maxBatchMessages",
             "tlsCa", "tlsCert", "tlsKey", "proxy", "proxyUsername", "proxyPassword", "compress", "retain", "maxInflight"));
 
@@ -106,7 +106,7 @@ public class DestinationService {
         return m;
     }
 
-    /** destination id -> [{id, name, role, active}] of the pipelines that use it */
+    /** destination id -> [{id, uid, name, role, active}] of the pipelines that use it */
     static Map<Long, List<Object>> usage(List<JsonObject> pipelines) {
         Map<Long, List<Object>> out = new LinkedHashMap<>();
         for (JsonObject p : pipelines) {
@@ -114,6 +114,7 @@ public class DestinationService {
                 if (ref != null && ref.isJsonPrimitive() && ref.getAsJsonPrimitive().isNumber()) {
                     Map<String, Object> u = new LinkedHashMap<>();
                     u.put("id", p.get("id").getAsLong());
+                    u.put("uid", Json.str(p, "uid"));
                     u.put("name", Json.str(p, "name"));
                     u.put("role", role);
                     u.put("active", p.get("active").getAsBoolean());

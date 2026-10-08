@@ -307,7 +307,7 @@ public class DestinationStore {
     }
 
     private List<JsonObject> destinations(Long orgId) {
-        return db.sql("SELECT id, name, service, config::text, org_id FROM {s}.bimba_gw_destination WHERE (? OR org_id = ?)"
+        return db.sql("SELECT id, name, service, config::text, org_id, uid FROM {s}.bimba_gw_destination WHERE (? OR org_id = ?)"
                         + " ORDER BY lower(name), id")
                 .params(orgId == null, orgId == null ? 0L : orgId)
                 .query((rs, n) -> {
@@ -318,6 +318,7 @@ public class DestinationStore {
                         d.addProperty("service", rs.getString(3));
                     }
                     d.addProperty("orgId", rs.getLong(5));
+                    d.addProperty("uid", rs.getString(6));
                     return d;
                 }).list();
     }
@@ -348,6 +349,7 @@ public class DestinationStore {
         JsonObject c = d.deepCopy();
         c.remove("id");
         c.remove("orgId");
+        c.remove("uid");
         return c;
     }
 
@@ -364,7 +366,7 @@ public class DestinationStore {
     }
 
     private List<JsonObject> pipelineRows(Long orgId) {
-        return db.sql("SELECT id, name, description, active, config::text, org_id FROM {s}.bimba_gw_pipeline WHERE (? OR org_id = ?)"
+        return db.sql("SELECT id, name, description, active, config::text, org_id, uid FROM {s}.bimba_gw_pipeline WHERE (? OR org_id = ?)"
                         + " ORDER BY position, id")
                 .params(orgId == null, orgId == null ? 0L : orgId)
                 .query((rs, n) -> {
@@ -374,6 +376,7 @@ public class DestinationStore {
                     p.addProperty("name", rs.getString(2));
                     p.addProperty("description", rs.getString(3));
                     p.addProperty("active", rs.getBoolean(4));
+                    p.addProperty("uid", rs.getString(7));
                     return p;
                 }).list();
     }

@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, PasswordInput, Status, usePoll, useToast, when } from "../ui.jsx";
+import { Card, Confirm, Empty, full, Modal, Msg, PageHeader, PasswordInput, Status, useOrgPath, usePoll, useRecordAddress, useToast, when } from "../ui.jsx";
 import { CATEGORIES, SERVICES, serviceOf } from "./services.js";
 
 // Destinations: connections to the systems that can receive machine data (Boomi, Kafka, Splunk, ...), stored in the
@@ -17,17 +17,25 @@ export default function Destinations() {
   const { can } = useSession();
   const toast = useToast();
   const { data, error, reload } = usePoll("destinations", 10_000);
-  const [picking, setPicking] = useState(false);
-  const [editing, setEditing] = useState(null);     // null | { service, d? }
+  const [adding, setAdding] = useState(null);       // the service picked for a new destination (/destinations/new)
   const [confirm, setConfirm] = useState(null);     // { title, subtitle, confirm, danger, action, done }
   const manage = can("delivery.manage");
   const list = data?.destinations ?? [];
   const unused = list.filter((d) => !d.usedBy.length).length;
+  const at = useOrgPath();
+  const rec = useRecordAddress(at("/destinations"), data ? list : undefined, "destination");
+  const shown = manage && data ? rec.record : null;   // null | "new" | destination
+  const picking = shown === "new" && !adding;
+  const editing = shown === "new" ? (adding ? { service: adding } : null) : shown ? { service: serviceOf(shown), d: shown } : null;
+  const close = () => {
+    setAdding(null);
+    rec.close();
+  };
 
   return (
     <>
       <PageHeader title="Destinations" subtitle="Connections to the systems that can receive machine data. A destination gets data only when a pipeline uses it.">
-        {manage && <button className="btn" onClick={() => setPicking(true)} disabled={!data}>Add destination</button>}
+        {manage && <button className="btn" onClick={() => rec.open("new")} disabled={!data}>Add destination</button>}
       </PageHeader>
       <Msg>{error}</Msg>
       {data?.source && data.source !== "database" && (
@@ -42,28 +50,28 @@ export default function Destinations() {
             {data && list.length === 0 && (
               <Empty cols={7}>No destinations yet.{manage ? " Add the systems that should receive data, then use them in a pipeline." : ""}</Empty>
             )}
-            {list.map((d) => <Row key={d.id} d={d} manage={manage} onEdit={() => setEditing({ service: serviceOf(d), d })} />)}
+            {list.map((d) => <Row key={d.id} d={d} mark={rec.mark(d)} manage={manage} onEdit={() => rec.open(d)} />)}
           </tbody>
         </table>
       </Card>
       <p className="muted small">
         {unused > 0 ? `${unused} destination${unused === 1 ? " is" : "s are"} not used by any pipeline and receive${unused === 1 ? "s" : ""} no data. ` : ""}
-        Choose primaries, secondaries and mirrors on the <Link to="/pipelines">Pipelines</Link> page. Secrets are stored encrypted.
+        Choose primaries, secondaries and mirrors on the <Link to={at("/pipelines")}>Pipelines</Link> page. Secrets are stored encrypted.
       </p>
 
       {picking && (
-        <ServicePicker added={list.map((d) => serviceOf(d).key)} onClose={() => setPicking(false)} onPick={(service) => { setPicking(false); setEditing({ service }); }} />
+        <ServicePicker added={list.map((d) => serviceOf(d).key)} onClose={close} onPick={setAdding} />
       )}
       {editing && (
         <DestinationDialog d={editing.d} service={editing.service} mask={data.mask} names={list.map((x) => x.name)}
-                           onClose={() => setEditing(null)}
-                           onBack={editing.d ? null : () => { setEditing(null); setPicking(true); }}
+                           onClose={close}
+                           onBack={editing.d ? null : () => setAdding(null)}
                            onSaved={(name, isNew) => {
-                             setEditing(null);
+                             close();
                              toast(isNew ? `${name} added. It receives data once a pipeline uses it.` : `${name} saved.`);
                              reload();
                            }}
-                           onDelete={(d) => { setEditing(null); setConfirm({
+                           onDelete={(d) => { close(); setConfirm({
                              title: `Remove ${d.name}?`, confirm: "Remove", danger: true, done: `${d.name} removed.`,
                              subtitle: d.usedBy.length ? `It is used by ${[...new Set(d.usedBy.map((u) => u.name))].join(", ")}: remove it there first.`
                                : "It is deleted with its settings.",
@@ -89,19 +97,20 @@ function liveState(d) {
   return ["", "Standby"];
 }
 
-function Row({ d, manage, onEdit }) {
+function Row({ d, mark, manage, onEdit }) {
   const [kind, text] = liveState(d);
   const messages = d.live.reduce((n, s) => n + (s.messages || 0), 0);
   const last = d.live.map((s) => s.lastSuccessAt).filter(Boolean).sort().pop();
   const err = d.live.find((s) => s.state === "down" && s.lastError)?.lastError;
+  const at = useOrgPath();
   return (
-    <tr className={d.usedBy.length ? "" : "off"}>
+    <tr className={d.usedBy.length ? "" : "off"} {...mark}>
       <td><b>{d.name}</b><small className="mono ep" title={endpoint(d)}>{endpoint(d)}</small></td>
       <td className="nowrap">{serviceOf(d).label}<small>{TRANSPORT[d.transport] ?? d.transport}</small></td>
       <td>
         {d.usedBy.length === 0 && <span className="muted small">No pipeline · no data</span>}
         {d.usedBy.map((u) => (
-          <Link key={`${u.id}-${u.role}`} to="/pipelines" className={`chip${u.active ? " accent" : ""}`} title={u.active ? "Active pipeline" : "Draft or paused pipeline"}>
+          <Link key={`${u.id}-${u.role}`} to={at(u.uid ? `/pipelines/${u.uid}` : "/pipelines")} className={`chip${u.active ? " accent" : ""}`} title={u.active ? "Active pipeline" : "Draft or paused pipeline"}>
             {u.name} · {ROLE[u.role]}
           </Link>
         ))}
@@ -184,6 +193,7 @@ function freeName(base, names) {
 }
 
 function DestinationDialog({ d, service, mask, names, onClose, onBack, onSaved, onDelete }) {
+  const at = useOrgPath();
   const isNew = !d;
   const [f, setF] = useState(() => (isNew
     ? { ...blank, ...service.defaults, auth: { ...blank.auth, ...service.defaults?.auth }, service: service.key, transport: service.transport,
@@ -264,7 +274,7 @@ function DestinationDialog({ d, service, mask, names, onClose, onBack, onSaved, 
              <button className="btn" disabled={busy} onClick={save}>{isNew ? "Add destination" : "Save"}</button></>}>
       {service.hidden && (
         <Msg kind="warn">{service.label} is no longer offered: the gateway stores readings in the BIMBA database itself. Add the
-          {" "}<b>BIMBA database</b> destination, put it in this one's place on the <Link to="/pipelines">Pipelines</Link> page, then remove this one.</Msg>
+          {" "}<b>BIMBA database</b> destination, put it in this one's place on the <Link to={at("/pipelines")}>Pipelines</Link> page, then remove this one.</Msg>
       )}
       <div className="field">
         <label htmlFor="d-name">Name</label>

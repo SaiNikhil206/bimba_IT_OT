@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Card, Confirm, Modal, Msg, PageHeader, Status, usePoll, useToast } from "../ui.jsx";
+import { Card, Confirm, Modal, Msg, PageHeader, Status, useOrgPath, usePoll, useRecordAddress, useToast } from "../ui.jsx";
 import { serviceOf } from "./services.js";
 
 // Pipelines: which readings go where, and how often. Data = machines + tag patterns; rate = every change, or a
@@ -34,7 +34,6 @@ export default function Pipelines() {
   const { can } = useSession();
   const toast = useToast();
   const { data, error, reload } = usePoll("pipelines", 10_000);
-  const [editing, setEditing] = useState(null);     // null | "new" | pipeline
   const [confirm, setConfirm] = useState(null);
   const [rejected, setRejected] = useState(null);   // pipeline whose rejected batches are open
   const [busy, setBusy] = useState(false);
@@ -43,6 +42,8 @@ export default function Pipelines() {
   const dests = data?.destinations ?? [];
   const byId = Object.fromEntries(dests.map((d) => [d.id, d]));
   const active = list.filter((p) => p.active);
+  const rec = useRecordAddress(useOrgPath()("/pipelines"), data ? list : undefined, "pipeline");
+  const editing = manage && data ? rec.record : null;     // null | "new" | pipeline
 
   const setActive = (p, on) => {
     const go = () => api(`pipelines/${p.id}/active`, { method: "POST", body: { active: on } });
@@ -68,7 +69,7 @@ export default function Pipelines() {
   return (
     <>
       <PageHeader title="Pipelines" subtitle="Which machines' data goes where: a primary destination, secondaries while it is down, and mirrors that get a copy.">
-        {manage && <button className="btn" onClick={() => setEditing("new")} disabled={!data || !dests.length}
+        {manage && <button className="btn" onClick={() => rec.open("new")} disabled={!data || !dests.length}
                            title={data && !dests.length ? "Add a destination first" : undefined}>New pipeline</button>}
       </PageHeader>
       <Msg>{error}</Msg>
@@ -80,10 +81,10 @@ export default function Pipelines() {
         <Msg kind="warn">No pipeline is active: machine data is not delivered anywhere. Activate a pipeline to start.</Msg>
       )}
       {!data && <p className="muted">Loading…</p>}
-      {data && list.length === 0 && <Steps hasDestinations={dests.length > 0} manage={manage} onNew={() => setEditing("new")} />}
+      {data && list.length === 0 && <Steps hasDestinations={dests.length > 0} manage={manage} onNew={() => rec.open("new")} />}
       {list.map((p) => (
-        <PipelineCard key={p.id} p={p} byId={byId} manage={manage} busy={busy}
-                      onEdit={() => setEditing(p)} onActive={(on) => setActive(p, on)} onRejected={() => setRejected(p)} />
+        <PipelineCard key={p.id} p={p} mark={rec.mark(p)} byId={byId} manage={manage} busy={busy}
+                      onEdit={() => rec.open(p)} onActive={(on) => setActive(p, on)} onRejected={() => setRejected(p)} />
       ))}
       {data && list.length > 0 && (
         <p className="muted small">
@@ -94,9 +95,9 @@ export default function Pipelines() {
 
       {editing && (
         <PipelineDialog p={editing === "new" ? null : editing} dests={dests} machines={data.machines} tags={data.tags ?? []} existing={list}
-                        onClose={() => setEditing(null)}
-                        onSaved={(r, on) => { setEditing(null); toast(on ? `${r.name} saved and active.` : `${r.name} saved as a draft: it sends nothing yet.`); reload(); }}
-                        onDelete={(p) => { setEditing(null); setConfirm({
+                        onClose={rec.close}
+                        onSaved={(r, on) => { rec.close(); toast(on ? `${r.name} saved and active.` : `${r.name} saved as a draft: it sends nothing yet.`); reload(); }}
+                        onDelete={(p) => { rec.close(); setConfirm({
                           title: `Delete ${p.name}?`, confirm: "Delete", danger: true, done: `${p.name} deleted.`,
                           subtitle: p.active ? "Its machines' data stops going to its destinations. The destinations themselves stay." : "The destinations themselves stay.",
                           action: () => api(`pipelines/${p.id}`, { method: "DELETE" }),
@@ -112,12 +113,13 @@ export default function Pipelines() {
 }
 
 function Steps({ hasDestinations, manage, onNew }) {
+  const at = useOrgPath();
   return (
     <Card title="Send machine data in three steps">
       <ol className="steps">
         <li className={hasDestinations ? "done" : ""}>
           <b>Add destinations</b><span>The systems that can receive data: Boomi, Kafka, Splunk, MQTT, … Test each connection.</span>
-          {!hasDestinations && <Link className="btn ghost sm" to="/destinations">Go to Destinations</Link>}
+          {!hasDestinations && <Link className="btn ghost sm" to={at("/destinations")}>Go to Destinations</Link>}
         </li>
         <li><b>Create a pipeline</b><span>Choose the machines, a primary destination, secondaries for when it is down, and mirrors.</span>
           {hasDestinations && manage && <button className="btn sm" onClick={onNew}>New pipeline</button>}
@@ -130,7 +132,7 @@ function Steps({ hasDestinations, manage, onNew }) {
 
 // ------------------------------------------------------------------ one pipeline
 
-function PipelineCard({ p, byId, manage, busy, onEdit, onActive, onRejected }) {
+function PipelineCard({ p, mark, byId, manage, busy, onEdit, onActive, onRejected }) {
   const st = p.status;
   const live = {};
   (st?.routes ?? []).forEach((r) => (r.destinations ?? []).forEach((d) => { live[d.name] = { ...d, active: r.activeDestination === d.name }; }));
@@ -142,7 +144,7 @@ function PipelineCard({ p, byId, manage, busy, onEdit, onActive, onRejected }) {
     : st.activeDestination !== byId[p.primary]?.name ? ["warn", "On secondary"]
     : ["good", "Delivering"];
   return (
-    <Card className="pipe">
+    <Card className="pipe" {...mark}>
       <div className="pipe-h">
         <div>
           <h2>{p.name} <Status kind={kind}>{text}</Status></h2>

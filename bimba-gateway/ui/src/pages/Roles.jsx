@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Card, Confirm, Modal, Msg, PageHeader, usePoll, useToast } from "../ui.jsx";
+import { Card, Confirm, Modal, Msg, PageHeader, useOrgPath, usePoll, useRecordAddress, useToast } from "../ui.jsx";
 
 // Roles: sets of permissions (roles.manage edits; users.manage can see them to assign them). Built-in roles are shared by
 // every organization (only platform admins change them); custom roles belong to the organization that created them.
@@ -10,9 +10,10 @@ export default function Roles() {
   const { can, org } = useSession();
   const toast = useToast();
   const { data, error, reload } = usePoll("roles", 0);
-  const [editing, setEditing] = useState(null);     // null | "new" | role
   const [deleting, setDeleting] = useState(null);
   const manage = can("roles.manage");
+  const rec = useRecordAddress(useOrgPath()("/roles"), data?.roles, "role");
+  const editing = manage && (rec.record === "new" || rec.record?.editable) ? rec.record : null;   // null | "new" | role
   const label = (k) => data?.permissions.find((p) => p.key === k)?.label ?? k;
   const why = (r) => (r.locked ? "The Administrator role always has every permission"
     : r.shared && !r.editable ? "Built-in roles are shared by every organization; only platform admins change them" : undefined);
@@ -20,13 +21,13 @@ export default function Roles() {
   return (
     <>
       <PageHeader title="Roles" subtitle={`A role is a set of permissions. A user's access in ${org.name} is everything their roles here allow.`}>
-        {manage && <button className="btn" onClick={() => setEditing("new")} disabled={!data}>New role</button>}
+        {manage && <button className="btn" onClick={() => rec.open("new")} disabled={!data}>New role</button>}
       </PageHeader>
       <Msg>{error}</Msg>
       {!data ? <p className="muted">Loading…</p> : (
         <div className="roles">
           {data.roles.map((r) => (
-            <Card key={r.id} className="role-card">
+            <Card key={r.id} className="role-card" {...rec.mark(r)}>
               <div>
                 <h2>{r.name} {r.builtin ? <span className="chip">Built-in · every organization</span> : <span className="chip accent" title={`${org.name} only`}>{org.name} only</span>}</h2>
                 <p className="sub">{r.description || "—"}</p>
@@ -36,7 +37,7 @@ export default function Roles() {
               <p className="muted small">{r.members} user(s) in {org.name}</p>
               {manage && (
                 <div className="acts">
-                  <button className="btn ghost sm" disabled={!r.editable} title={why(r)} onClick={() => setEditing(r)}>Edit</button>
+                  <button className="btn ghost sm" disabled={!r.editable} title={why(r)} onClick={() => rec.open(r)}>Edit</button>
                   {!r.builtin && r.editable && <button className="btn danger sm" onClick={() => setDeleting(r)}>Delete…</button>}
                 </div>
               )}
@@ -46,7 +47,7 @@ export default function Roles() {
       )}
       {editing && (
         <RoleDialog role={editing === "new" ? null : editing} catalog={data.permissions} can={can} org={org}
-                    onClose={() => setEditing(null)} onSaved={() => { setEditing(null); toast("Role saved."); reload(); }} />
+                    onClose={rec.close} onSaved={() => { rec.close(); toast("Role saved."); reload(); }} />
       )}
       {deleting && (
         <Confirm title={`Delete the role ${deleting.name}?`} danger confirm="Delete"

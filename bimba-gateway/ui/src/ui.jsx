@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api.js";
 import { useSession } from "./session.jsx";
 
@@ -59,9 +60,9 @@ export function PageHeader({ title, subtitle, children }) {
   );
 }
 
-export function Card({ title, subtitle, action, flush, children, className = "" }) {
+export function Card({ title, subtitle, action, flush, children, className = "", ...rest }) {
   return (
-    <section className={`card${flush ? " flush" : ""} ${className}`}>
+    <section className={`card${flush ? " flush" : ""} ${className}`} {...rest}>
       {(title || action) && (
         <div className="card-h">
           <div>
@@ -274,4 +275,49 @@ export function usePoll(path, ms) {
     return () => clearInterval(t);
   }, [load, ms]);
   return { data, error, reload: () => load(false) };
+}
+
+/** An organization page's address in the organization the session works in: at("/pipelines") = "/northwind-water/pipelines". */
+export function useOrgPath() {
+  const slug = useSession().org?.slug ?? "";
+  return useCallback((path) => `/${slug}${path}`, [slug]);
+}
+
+/**
+ * The record a page shows, from its address: <base>/<uid> opens that record (e.g. /northwind-water/pipelines/<uid>),
+ * <base>/new the form for a new one.
+ * open(record | "new") and close() change the address, so every open record is a link that can be shared and the
+ * browser's Back closes it. records = the page's list (undefined while it loads); an address whose record is not in
+ * it (deleted, or another organization's) goes back to the list with a notice. The record is scrolled into view
+ * (rows and cards carry data-uid), also for users who may only look at it.
+ */
+export function useRecordAddress(base, records, noun) {
+  const key = useParams()["*"] || null;
+  const navigate = useNavigate();
+  const { search } = useLocation();
+  const toast = useToast();
+  const uid = (r) => String(r.uid ?? r.id);
+  const record = !key ? null : key === "new" ? "new" : records?.find((r) => uid(r) === key) ?? null;
+  const missing = !!key && key !== "new" && !!records && !record;
+  const told = useRef(null);
+  const loaded = !!records;
+
+  useEffect(() => {
+    if (!missing || told.current === key) return;
+    told.current = key;
+    toast(`That ${noun} is not in this organization any more. It may have been deleted.`);
+    navigate(`${base}${search}`, { replace: true });
+  }, [missing, key, noun, base, search, navigate, toast]);
+  useEffect(() => {
+    if (loaded && key && key !== "new") document.querySelector(`[data-uid="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "center" });
+  }, [loaded, key]);
+
+  return {
+    key,
+    record,
+    open: (r) => navigate(`${base}/${r === "new" ? "new" : uid(r)}${search}`),
+    close: () => navigate(`${base}${search}`, { replace: true }),
+    /** props for the record's row or card: its address id, highlighted while it is the one in the address */
+    mark: (r) => ({ "data-uid": uid(r), "data-open": uid(r) === key || undefined }),
+  };
 }

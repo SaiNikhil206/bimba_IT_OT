@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
-import { Avatar, Card, Confirm, Empty, full, Modal, Msg, PageHeader, SecretDialog, Status, usePoll, useToast, when } from "../ui.jsx";
+import { Avatar, Card, Confirm, Empty, full, Modal, Msg, PageHeader, SecretDialog, Status, useOrgPath, usePoll, useRecordAddress, useToast, when } from "../ui.jsx";
 
 // Users (users.manage): the members of the organization the session works in, and their roles here. One account can be a
 // member of several organizations (different roles in each). The account itself (name, e-mail, password, enabled) of
@@ -13,18 +13,19 @@ export default function Users() {
   const users = usePoll("users", 0);
   const roles = usePoll("roles", 0);
   const [q, setQ] = useState("");
-  const [editing, setEditing] = useState(null);     // null | "new" | user
   const [confirm, setConfirm] = useState(null);     // { user, action, title, subtitle, danger, method, path, label }
   const [secret, setSecret] = useState(null);       // { title, subtitle, value }
 
   const n = q.trim().toLowerCase();
   const list = (users.data?.users ?? []).filter((u) => !n || [u.email, u.firstName, u.lastName].join(" ").toLowerCase().includes(n));
   const editable = (u) => !u.platformAdmin || me.platformAdmin;
+  const rec = useRecordAddress(useOrgPath()("/users"), users.data?.users, "user");
+  const editing = rec.record === "new" || (rec.record && editable(rec.record)) ? rec.record : null;   // null | "new" | user
 
   return (
     <>
       <PageHeader title="Users" subtitle={`Members of ${org.name} and their roles here. One account can belong to several organizations.`}>
-        <button className="btn" onClick={() => setEditing("new")} disabled={!roles.data}>Add user</button>
+        <button className="btn" onClick={() => rec.open("new")} disabled={!roles.data}>Add user</button>
       </PageHeader>
       <div className="toolbar">
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter users" aria-label="Filter users" />
@@ -43,7 +44,7 @@ export default function Users() {
               const act = (action, title, subtitle, danger) => setConfirm({ user: u, title, subtitle, danger, method: "POST", path: `users/${u.id}/${action}`,
                 label: action === "reset-password" ? "Reset password" : "Confirm" });
               return (
-                <tr key={u.id}>
+                <tr key={u.id} {...rec.mark(u)}>
                   <td className="who">
                     <Avatar user={{ ...u, name: `${u.firstName} ${u.lastName}`.trim() }} />
                     <div>
@@ -66,7 +67,7 @@ export default function Users() {
                   <td className="r">
                     <div className="row-acts">
                       <button className="btn ghost sm" disabled={!ok} title={ok ? undefined : "Only platform admins can change platform admin accounts"}
-                              onClick={() => setEditing(u)}>Edit</button>
+                              onClick={() => rec.open(u)}>Edit</button>
                       {u.locked && ok && <button className="btn ghost sm" onClick={() => act("unlock", `Unlock ${u.email}?`, "The account can sign in again right away.")}>Unlock</button>}
                       {account && u.id !== me.id && (
                         <button className="btn ghost sm" onClick={() => act("reset-password", `Reset the password of ${u.email}?`,
@@ -93,9 +94,9 @@ export default function Users() {
 
       {editing && roles.data && (
         <UserDialog user={editing === "new" ? null : editing} roles={roles.data.roles} me={me} org={org}
-                    onClose={() => setEditing(null)}
+                    onClose={rec.close}
                     onSaved={(r) => {
-                      setEditing(null);
+                      rec.close();
                       users.reload();
                       if (r?.temporaryPassword) setSecret({ title: `${r.email} created`, subtitle: "Give the temporary password to the user over a safe channel.", value: r.temporaryPassword });
                       else toast(r?.added ? `${r.email} added to ${org.name}.` : "Saved.");

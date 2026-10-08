@@ -463,6 +463,9 @@ public class SecurityService {
      */
     public List<Map<String, Object>> users(Principal actor) throws ApiException {
         long org = actor.org();
+        // accounts made outside the gateway (Django) have no profile yet; the profile holds the user's public id
+        db.sql("INSERT INTO {s}.bimba_gw_user_profile (user_id) SELECT m.user_id FROM {s}.bimba_org_member m WHERE m.org_id = ?"
+                + " ON CONFLICT (user_id) DO NOTHING").param(org).update();
         return db.sql("SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.is_active, u.is_superuser,"
                         + " u.last_login, u.date_joined, COALESCE(p.must_change_password, false),"
                         + " (p.locked_until IS NOT NULL AND p.locked_until > now()), p.last_login_ip,"
@@ -472,13 +475,14 @@ public class SecurityService {
                         + "   AND s.last_seen_at > now() - (? * interval '1 minute')),"
                         + " COALESCE((SELECT json_agg(o.name ORDER BY o.name) FROM {s}.bimba_org_member m2 JOIN {s}.bimba_org o ON o.id = m2.org_id"
                         + "   WHERE m2.user_id = u.id AND m2.org_id <> m.org_id)::text, '[]'),"
-                        + " CASE WHEN p.avatar IS NULL THEN NULL ELSE (EXTRACT(EPOCH FROM p.avatar_updated_at) * 1000)::bigint END"
+                        + " CASE WHEN p.avatar IS NULL THEN NULL ELSE (EXTRACT(EPOCH FROM p.avatar_updated_at) * 1000)::bigint END, p.uid"
                         + " FROM {s}.bimba_org_member m JOIN {s}.auth_user u ON u.id = m.user_id"
                         + " LEFT JOIN {s}.bimba_gw_user_profile p ON p.user_id = u.id WHERE m.org_id = ? ORDER BY lower(u.email), u.username")
                 .params(sec().idleMinutes, org)
                 .query((rs, n) -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", rs.getLong(1));
+                    m.put("uid", rs.getString(17));
                     m.put("username", rs.getString(2));
                     m.put("firstName", rs.getString(3));
                     m.put("lastName", rs.getString(4));
@@ -717,12 +721,13 @@ public class SecurityService {
     public List<Map<String, Object>> roles(Principal actor) throws ApiException {
         long org = actor.org();
         return db.sql("SELECT r.id, r.name, r.description, r.permissions::text, r.builtin, r.org_id IS NULL,"
-                        + " (SELECT count(*) FROM {s}.bimba_gw_user_role ur WHERE ur.role_id = r.id AND ur.org_id = ?) FROM {s}.bimba_gw_role r"
+                        + " (SELECT count(*) FROM {s}.bimba_gw_user_role ur WHERE ur.role_id = r.id AND ur.org_id = ?), r.uid FROM {s}.bimba_gw_role r"
                         + " WHERE r.org_id IS NULL OR r.org_id = ? ORDER BY r.builtin DESC, r.org_id IS NOT NULL, lower(r.name)")
                 .params(org, org)
                 .query((rs, n) -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", rs.getLong(1));
+                    m.put("uid", rs.getString(8));
                     m.put("name", rs.getString(2));
                     m.put("description", rs.getString(3));
                     boolean locked = rs.getBoolean(5) && ADMIN_ROLE.equals(rs.getString(2));
