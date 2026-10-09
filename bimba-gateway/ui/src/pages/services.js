@@ -17,19 +17,19 @@ export const SERVICES = [
   {
     key: "boomi-eventstreams", label: "Boomi Event Streams", category: "Boomi", transport: "eventstreams", role: "primary",
     description: "Produce to an Event Streams topic through its REST endpoint.",
-    defaults: { esMode: "batch", esApi: "auto" },
+    defaults: { esMode: "batch", esApi: "auto", schemaVersion: "1" },     // the BIMBA Boomi processes read 1.x
   },
   {
     key: "boomi-atom", label: "Boomi Atom web service", category: "Boomi", transport: "rest", role: "primary",
     description: "POST to a Web Services Server listener of a Boomi process (Atom, Molecule, Atom Cloud).",
-    defaults: { url: "http://boomi-atom:9090/ws/rest/bimba/ingest", format: "envelope", auth: { type: "basic" } },
+    defaults: { url: "http://boomi-atom:9090/ws/rest/bimba/ingest", format: "envelope", auth: { type: "basic" }, schemaVersion: "1" },
     fixed: ["format"], authTypes: ["basic", "none"],
     labels: { "auth.username": "User name (user@account)", "auth.password": "Password or token" },
   },
   {
     key: "bimba-ingest", label: "BIMBA Ingest (old receiver)", category: "BIMBA", transport: "rest", role: "failover", hidden: true,
     description: "The separate BIMBA Ingest receiver (Django). The gateway now stores readings itself: use the BIMBA database destination.",
-    defaults: { url: "http://django:8000/api/ingest/", format: "envelope", headers: { "X-API-Key": "" }, probe: true },
+    defaults: { url: "http://django:8000/api/ingest/", format: "envelope", headers: { "X-API-Key": "" }, probe: true, schemaVersion: "1" },
     fixed: ["format"],
   },
   {

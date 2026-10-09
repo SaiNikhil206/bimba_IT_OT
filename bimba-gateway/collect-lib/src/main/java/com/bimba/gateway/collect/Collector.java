@@ -1,5 +1,6 @@
 package com.bimba.gateway.collect;
 
+import com.bimba.gateway.collect.Canonical.Quality;
 import com.bimba.gateway.config.TagModel;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
@@ -28,6 +29,10 @@ import java.util.function.Consumer;
  * BIMBA message (docs/payload.md) for the sink (the gateway's delivery engine, or the edge collector's uplink to the
  * site agent service). A device that cannot be reached makes all of its tags BAD (one message per tag) until it
  * answers again. A device's connection settings may carry its own "pollMs".
+ * <p>
+ * Each reading becomes an engineering value ({@link #engineering}): converted to the tag's unit, checked against its
+ * engineering range (outside = UNCERTAIN), numbers rounded to 12 significant digits; a GOOD reading without a usable
+ * value (NaN, empty) is BAD.
  */
 public class Collector {
     private static final Logger log = LoggerFactory.getLogger("BIMBA.Collector");
@@ -210,16 +215,17 @@ public class Collector {
             return driver.read(tags);
         }
 
-        private void emit(TagModel.Tag t, Driver.Reading r, Instant at) {
-            Object value = normalize(t, r.value());
-            String quality = r.good() ? "GOOD" : "BAD";
+        private void emit(TagModel.Tag t, Driver.Reading raw, Instant at) {
+            Driver.Reading r = engineering(t, raw);
+            Object value = r.value();
+            String quality = r.quality().name();
             Object[] prev = last.get(t.path());
             if (prev != null && Objects.equals(prev[0], value) && prev[1].equals(quality)) {
                 return;
             }
             last.put(t.path(), new Object[]{value, quality});
             events.incrementAndGet();
-            sink.accept(message(t, value, quality, r.detail(), at));
+            sink.accept(message(t, r, at));
         }
 
         void close() {
@@ -254,30 +260,62 @@ public class Collector {
         return k.has(device) && k.get(device).isJsonObject() ? k.getAsJsonObject(device) : null;
     }
 
-    /** Booleans stay booleans; numbers become doubles rounded to 12 significant digits (no 52.300000000000004). */
-    private static Object normalize(TagModel.Tag t, Object v) {
-        if (v instanceof Double d) {
-            if (d.isNaN() || d.isInfinite()) {
-                return null;
-            }
-            if ("Boolean".equalsIgnoreCase(t.dataType())) {
-                return d != 0;
-            }
-            return new BigDecimal(d).round(DIGITS).doubleValue();
+    /**
+     * The reading as delivered: Boolean tags read as numbers become booleans; numbers are converted from the device's
+     * unit to the tag's, checked against the engineering range (outside = UNCERTAIN) and rounded to 12 significant
+     * digits (no 52.300000000000004); NaN / infinity / no value is BAD.
+     */
+    static Driver.Reading engineering(TagModel.Tag t, Driver.Reading r) {
+        if (r.quality() == Quality.BAD) {
+            return r.value() == null ? r : new Driver.Reading(null, Quality.BAD, r.detail(), r.sourceTime());
         }
-        if (v instanceof Number n) {
-            return normalize(t, n.doubleValue());
+        Object v = r.value() instanceof Number n && !(r.value() instanceof Double) ? (Object) n.doubleValue() : r.value();
+        if (v == null) {
+            return new Driver.Reading(null, Quality.BAD, r.detail() != null ? r.detail() : "no value", r.sourceTime());
         }
-        return v;
+        if (!(v instanceof Double d)) {
+            return r.value() == v ? r : new Driver.Reading(v, r.quality(), r.detail(), r.sourceTime());
+        }
+        if (d.isNaN() || d.isInfinite()) {
+            return new Driver.Reading(null, Quality.BAD, "not a number (" + d + ")", r.sourceTime());
+        }
+        if ("Boolean".equalsIgnoreCase(t.dataType())) {
+            return new Driver.Reading(d != 0, r.quality(), r.detail(), r.sourceTime());
+        }
+        double x = d;
+        if (t.converts()) {
+            try {
+                x = Units.convert(x, t.sourceUnit().trim(), t.unit().trim());
+            } catch (IllegalArgumentException e) {
+                return new Driver.Reading(null, Quality.BAD, e.getMessage(), r.sourceTime());
+            }
+        }
+        Quality q = r.quality();
+        String detail = r.detail();
+        if (!t.inRange(x)) {
+            q = Quality.UNCERTAIN;
+            detail = (detail == null ? "" : detail + "; ") + "outside the engineering range "
+                    + (t.engLow() == null ? "" : plain(t.engLow())) + ".." + (t.engHigh() == null ? "" : plain(t.engHigh()));
+        }
+        return new Driver.Reading(new BigDecimal(x).round(DIGITS).doubleValue(), q, detail, r.sourceTime());
     }
 
-    private JsonObject message(TagModel.Tag t, Object value, String quality, String detail, Instant at) {
+    private static String plain(double d) {
+        return BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
+    }
+
+    private JsonObject message(TagModel.Tag t, Driver.Reading r, Instant at) {
+        Object value = r.value();
+        String detail = r.detail();
         JsonObject m = new JsonObject();
-        m.addProperty("schemaVersion", "1.0");
+        m.addProperty("schemaVersion", Canonical.VERSION);
         m.addProperty("messageId", UUID.randomUUID().toString());
         m.addProperty("plantId", plantId);
         m.addProperty("machineId", t.machine());
         m.addProperty("timestamp", at.toString());
+        if (r.sourceTime() != null) {
+            m.addProperty("sourceTimestamp", r.sourceTime().toString());
+        }
         m.addProperty("tagName", t.name());
         if (value instanceof Boolean b) {
             m.addProperty("tagValue", b);
@@ -293,7 +331,7 @@ public class Collector {
             m.addProperty("dataType", "string");
         }
         m.addProperty("unit", t.unit());
-        m.addProperty("quality", quality);
+        m.addProperty("quality", r.quality().name());
         if (detail != null) {
             m.addProperty("qualityDetail", detail);
         }

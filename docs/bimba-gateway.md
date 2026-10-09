@@ -20,6 +20,8 @@ expressions ────────┘   (j2mod, Eclipse Milo)        canonical
 |---|---|
 | **Field drivers** | Modbus TCP (holding/input registers as signed 16-bit, coils, discrete inputs; `HR2`, `IR5`, `C1`, `DI3`, optional `<unit>.` prefix; one- or zero-based), OPC UA (all nodes of a server in one Read per cycle; security policy None, Anonymous or Username), expressions (computed tags, Ignition-compatible subset: math, comparisons, `if`, `now`, `sin`, `getSecond`...). |
 | **Collection** | Every device is read every `pollMs` (default 1000 ms) on its own thread. A message is sent only when a value or its quality changes. A device that cannot be reached turns all its tags BAD (with the reason in `qualityDetail`) and comes back by itself. |
+| **Message check** | Every message (the gateway's own and the site agents') is checked against the JSON Schema of its version before routing. Messages that fail go to the **Quarantine** (`<data>/quarantine`, console → Quarantine) with their raw text and a reason code; replay them after a fix, or discard them. Format and version rules: [payload.md](payload.md#versions-fr-can-05). Each destination receives format **2.0** (BRD canonical envelope, snake_case) or **1.x**, set per destination. |
+| **Engineering values** | Linear scaling (`scaleMode`, `rawLow`…`scaledHigh`), then unit conversion from the device's unit (`sourceUnit`) to the tag's (`engUnit` / agent tag `unit`), then the engineering range (`engLow` / `engHigh`): outside it the value is delivered as UNCERTAIN. OPC UA `Uncertain_*` status codes are UNCERTAIN too, and the server's source timestamp is sent as `sourceTimestamp`. |
 | **Delivery** | Same engine as the former module: batching, Boomi Event Streams primary → failover (e.g. the built-in BIMBA database) with failback and standby probes, Kafka/webhook mirror routes, disk store-and-forward per route. |
 | **Site agents** | Enrollment, heartbeats and the all-organization list for the BIMBA Site Agent installer. |
 | **Console** | `http://<gateway>:8090/` (or `https://…:8443`): sign-in, Overview (devices, delivery, certificate fingerprint), Site agents (all organizations), Users, Roles, Audit log, Profile. See *Users, roles and sign-in* below. `/system/bimba-status` is the JSON status that BIMBA Operations reads. |
@@ -31,7 +33,7 @@ All in the config folder (compose mounts `./ignition/bimba` at `/config`), hot-r
 | File | Content | Edited in |
 |---|---|---|
 | `config.json` | plant/edge id, `pollMs`, batching, buffer, `agents` (destinations: database, see below) | by hand |
-| `demo-tags.json` | tag tree: one folder per machine, one entry per tag (Modbus register, OPC UA node or expression, unit, scaling) | Settings → Modbus / OPC UA |
+| `demo-tags.json` | tag tree: one folder per machine, one entry per tag (Modbus register, OPC UA node or expression, unit, scaling, optional `sourceUnit`, `engLow`, `engHigh`) | Settings → Modbus / OPC UA |
 | `console-sources.json` | device connections: Modbus host/port/unit id/timeout/addressing, OPC UA endpoint/sign-in/timeout | Settings → Modbus / OPC UA |
 
 The tag tree uses the Ignition tag-export layout, so an export from an existing Ignition installation can be
@@ -289,3 +291,4 @@ Do not run both at the same time: both would read the devices and send every val
 * Devices and tags are edited in BIMBA Operations → Settings, not in the gateway console.
 * No two-factor sign-in yet, and `/system/bimba-status` is still readable without signing in (BIMBA Operations reads it).
 * One gateway per plant; no clustering / redundancy.
+

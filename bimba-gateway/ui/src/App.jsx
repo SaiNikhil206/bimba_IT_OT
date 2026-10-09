@@ -7,6 +7,7 @@ import { ForgotPassword, ResetPassword } from "./pages/PasswordReset.jsx";
 import Overview from "./pages/Overview.jsx";
 import Pipelines from "./pages/Pipelines.jsx";
 import Destinations from "./pages/Destinations.jsx";
+import Quarantine from "./pages/Quarantine.jsx";
 import Agents from "./pages/Agents.jsx";
 import Users from "./pages/Users.jsx";
 import Roles from "./pages/Roles.jsx";
@@ -28,6 +29,7 @@ const PAGES = [
   { path: "/agents", records: true, label: "Site agents", icon: "⌂", perm: ["agents.view"], element: <Agents /> },
   { path: "/pipelines", records: true, label: "Pipelines", icon: "⇉", perm: ["gateway.view"], group: "Delivery", element: <Pipelines /> },
   { path: "/destinations", records: true, label: "Destinations", icon: "◇", perm: ["gateway.view"], group: "Delivery", element: <Destinations /> },
+  { path: "/quarantine", label: "Quarantine", icon: "⊘", perm: ["gateway.view"], group: "Delivery", element: <Quarantine /> },
   { path: "/users", records: true, label: "Users", icon: "◉", perm: ["users.manage"], group: "Administration", element: <Users /> },
   { path: "/roles", records: true, label: "Roles", icon: "◆", perm: ["roles.manage", "users.manage"], group: "Administration", element: <Roles /> },
   { path: "/audit", label: "Audit log", icon: "≡", perm: ["audit.view"], group: "Administration", element: <Audit /> },

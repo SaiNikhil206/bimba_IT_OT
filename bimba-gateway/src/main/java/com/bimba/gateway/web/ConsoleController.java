@@ -7,6 +7,8 @@ import com.bimba.gateway.agents.AgentRegistry;
 import com.bimba.gateway.agents.AgentSources;
 import com.bimba.gateway.agents.EnrollTokens;
 import com.bimba.gateway.agents.InstallerFile;
+import com.bimba.gateway.canonical.Ingest;
+import com.bimba.gateway.canonical.Quarantine;
 import com.bimba.gateway.config.DestinationService;
 import com.bimba.gateway.config.DestinationStore;
 import com.bimba.gateway.config.PipelineService;
@@ -63,12 +65,14 @@ public class ConsoleController {
     private final EnrollTokens tokens;
     private final InstallerFile installer;
     private final AgentSources sources;
+    private final Ingest ingest;
 
     public ConsoleController(GatewayService gateway, AgentRegistry agents, SecurityService security, OrgService orgs,
                              DestinationService destinations, DestinationStore store, PipelineService pipelines,
                              com.bimba.gateway.security.PasswordResetService resets, EnrollTokens tokens, InstallerFile installer,
-                             AgentSources sources) {
+                             AgentSources sources, Ingest ingest) {
         this.sources = sources;
+        this.ingest = ingest;
         this.tokens = tokens;
         this.installer = installer;
         this.gateway = gateway;
@@ -168,6 +172,8 @@ public class ConsoleController {
         }
         m.put("tlsFingerprint", Tls.fingerprint);
         m.put("scope", p.superuser() ? "gateway" : "organization");
+        long[] q = ingest.quarantine().count(quarantineOf(p));
+        m.put("quarantine", Map.of("entries", q[0], "records", q[1]));
         return m;
     }
 
@@ -505,6 +511,113 @@ public class ConsoleController {
         security.audit(p, "pipeline.rejected." + action, String.valueOf(id), failed.isEmpty(), req.getRemoteAddr(),
                 Map.of("batches", done, "failed", failed.size()));
         return Map.of("done", done, "failed", failed);
+    }
+
+    // ------------------------------------------------------------------ quarantine (records refused before routing)
+
+    /**
+     * The organization's quarantine entries: from its site agents, or naming its machines. Platform admins also see the
+     * entries that belong to no organization (the gateway's own records without a machine).
+     */
+    private java.util.function.Predicate<Quarantine.Meta> quarantineOf(Principal p) throws ApiException {
+        long org = p.org();
+        Map<String, Long> owners = orgs.owners();
+        Long def = orgs.defaultOrgId();
+        return q -> q.origin().orgId() != null ? q.origin().orgId() == org
+                : q.machines().isEmpty() ? p.superuser()
+                : q.machines().stream().anyMatch(mc -> OrgService.owns(org, mc, owners, def));
+    }
+
+    @GetMapping("/quarantine")
+    @PreAuthorize("hasAuthority('gateway.view')")
+    Map<String, Object> quarantine(@AuthenticationPrincipal Principal p) throws ApiException {
+        Map<String, String> names = new java.util.HashMap<>();
+        agents.list(p.org()).forEach(a -> names.put(String.valueOf(a.get("id")),
+                String.valueOf(a.get("name") != null ? a.get("name") : a.get("hostname"))));
+        var visible = quarantineOf(p);
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (Quarantine.Meta q : ingest.quarantine().list(visible, 500)) {
+            Map<String, Object> m = q.json();
+            m.put("agentName", q.origin().agentId() == null ? null : names.get(q.origin().agentId().toString()));
+            list.add(m);
+        }
+        long[] n = ingest.quarantine().count(visible);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entries", list);
+        out.put("totalEntries", n[0]);
+        out.put("totalRecords", n[1]);
+        out.put("schemaVersion", com.bimba.gateway.collect.Canonical.VERSION);
+        out.put("acceptedMajors", com.bimba.gateway.canonical.MessageCheck.majors());
+        return out;
+    }
+
+    @GetMapping("/quarantine/{id}")
+    @PreAuthorize("hasAuthority('delivery.manage')")
+    Map<String, Object> quarantined(@AuthenticationPrincipal Principal p, @PathVariable String id) throws ApiException {
+        Quarantine.Entry e;
+        try {
+            e = ingest.quarantine().read(id, quarantineOf(p));
+        } catch (java.io.IOException ex) {
+            e = null;
+        }
+        if (e == null) {
+            throw new ApiException(404, "not_found", "That quarantine entry is not there any more.");
+        }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Quarantine.Item it : e.items()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("machineId", it.machineId());
+            m.put("tagName", it.tagName());
+            m.put("detail", it.detail());
+            m.put("raw", it.raw());
+            items.add(m);
+        }
+        return Map.of("entry", e.meta().json(), "items", items);
+    }
+
+    /** body {ids: [..], action: replay | discard} */
+    @PostMapping("/quarantine")
+    @PreAuthorize("hasAuthority('delivery.manage')")
+    Map<String, Object> handleQuarantine(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
+            throws ApiException {
+        JsonObject b = ApiErrors.parse(body);
+        String action = String.valueOf(str(b, "action"));
+        if (!"replay".equals(action) && !"discard".equals(action)) {
+            throw new ApiException(400, "action", "Choose replay or discard.");
+        }
+        List<String> ids = new ArrayList<>();
+        if (b.has("ids") && b.get("ids").isJsonArray()) {
+            b.getAsJsonArray("ids").forEach(x -> ids.add(x.isJsonPrimitive() ? x.getAsString() : ""));
+        }
+        var visible = quarantineOf(p);
+        Map<String, Object> out;
+        if ("replay".equals(action)) {
+            com.bimba.gateway.delivery.DeliveryEngine e = engine();
+            try {
+                out = ingest.replay(ids, visible, sources::machinesOf, e::offer);
+            } catch (java.io.IOException ex) {
+                throw new ApiException(500, "io", "The quarantine could not be read: " + ex.getMessage());
+            }
+        } else {
+            List<String> missing = new ArrayList<>();
+            int done = 0;
+            for (String id : ids) {
+                if (ingest.quarantine().discard(id, visible)) {
+                    done++;
+                } else {
+                    missing.add(id);
+                }
+            }
+            out = new LinkedHashMap<>();
+            out.put("discarded", done);
+            out.put("missing", missing);
+        }
+        Map<String, Object> audit = new LinkedHashMap<>(out);
+        audit.put("entries", ids.size());
+        audit.remove("missing");
+        security.audit(p, "quarantine." + action, ids.size() + " entr" + (ids.size() == 1 ? "y" : "ies"),
+                ((List<?>) out.get("missing")).isEmpty(), req.getRemoteAddr(), audit);
+        return out;
     }
 
     private static Map<String, Object> pipelineDetail(JsonObject b) {

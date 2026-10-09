@@ -1,7 +1,9 @@
 package com.bimba.gateway.collect;
 
+import com.bimba.gateway.collect.Canonical.Quality;
 import com.bimba.gateway.config.TagModel;
 
+import java.time.Instant;
 import java.util.List;
 
 /** A connection to one field device. Read cycles run on one thread per device, so drivers need no locking. */
@@ -15,14 +17,29 @@ public interface Driver extends AutoCloseable {
     @Override
     void close();
 
-    /** value is Boolean, Double or String; good=false carries the reason in detail */
-    record Reading(Object value, boolean good, String detail) {
+    /**
+     * value is Boolean, Double or String; detail says why the reading is not GOOD; sourceTime is the device's own
+     * time for the value (null when the protocol has none, e.g. Modbus).
+     */
+    record Reading(Object value, Quality quality, String detail, Instant sourceTime) {
         public static Reading ok(Object v) {
-            return new Reading(v, true, null);
+            return new Reading(v, Quality.GOOD, null, null);
+        }
+
+        public static Reading ok(Object v, Instant sourceTime) {
+            return new Reading(v, Quality.GOOD, null, sourceTime);
+        }
+
+        public static Reading uncertain(Object v, String detail, Instant sourceTime) {
+            return new Reading(v, Quality.UNCERTAIN, detail, sourceTime);
         }
 
         public static Reading bad(String detail) {
-            return new Reading(null, false, detail);
+            return new Reading(null, Quality.BAD, detail, null);
+        }
+
+        public boolean good() {
+            return quality == Quality.GOOD;
         }
     }
 }

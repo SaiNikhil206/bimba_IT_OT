@@ -15,7 +15,7 @@ import java.util.UUID;
  * The rate of a pipeline other than "every change":
  * <ul>
  *   <li>sample: every N seconds, the current value of each tag (also tags that did not change), timestamp = sample
- *       time, sourceTimestamp = when the value was read;</li>
+ *       time, sourceTimestamp = the device's time for the value (when it reports one), else when it was read;</li>
  *   <li>average: every N seconds, per tag that reported in the window: numbers = average of the GOOD readings with
  *       aggregate {fn: avg, min, max, count, from, to}; other values = the last one (fn: last).</li>
  * </ul>
@@ -121,7 +121,9 @@ final class Sampler {
     private static JsonObject copy(JsonObject m, String at) {
         JsonObject c = m.deepCopy();
         c.addProperty("messageId", UUID.randomUUID().toString());
-        c.addProperty("sourceTimestamp", Json.str(m, "timestamp"));
+        if (Json.str(m, "sourceTimestamp").isEmpty()) {
+            c.addProperty("sourceTimestamp", Json.str(m, "timestamp"));
+        }
         c.addProperty("timestamp", at);
         if (c.has("edge") && c.get("edge").isJsonObject()) {
             c.getAsJsonObject("edge").remove("seq");

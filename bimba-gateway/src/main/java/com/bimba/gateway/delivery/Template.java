@@ -21,11 +21,12 @@ import java.util.regex.Pattern;
  * A string that is exactly one placeholder keeps the value's type ("{tagValue}" -> 21.5); placeholders inside longer
  * text are written as text. Unknown fields are refused when the template is saved; missing values become null / "".
  * <pre>{"asset": "{machineId}", "signal": "{tagName}", "value": "{tagValue}", "ts": "{timestampMs}", "site": "{plantId}"}</pre>
+ * The 2.0 snake_case names may be used as well: {machine_id}, {tag_value}, {timestamp_ms}, ...
  */
 public final class Template {
     public static final List<String> FIELDS = List.of(
             "plantId", "edgeId", "machineId", "tagName", "path", "tagValue", "dataType", "unit", "quality", "qualityDetail",
-            "timestamp", "timestampMs", "epochSeconds", "sourceTimestamp", "messageId", "batchId", "category", "schemaVersion",
+            "timestamp", "timestampMs", "epochSeconds", "sourceTimestamp", "ingestTime", "messageId", "batchId", "category", "schemaVersion",
             "source.protocol", "source.address", "source.system", "edge.session", "edge.seq",
             "aggregate.fn", "aggregate.min", "aggregate.max", "aggregate.count", "aggregate.windowSeconds", "aggregate.from", "aggregate.to");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([A-Za-z][A-Za-z0-9_.]*)\\}");
@@ -75,7 +76,7 @@ public final class Template {
     private static void names(String text, List<String> unknown) {
         Matcher m = PLACEHOLDER.matcher(text);
         while (m.find()) {
-            if (!FIELDS.contains(m.group(1)) && !unknown.contains("{" + m.group(1) + "}")) {
+            if (!FIELDS.contains(field(m.group(1))) && !unknown.contains("{" + m.group(1) + "}")) {
                 unknown.add("{" + m.group(1) + "}");
             }
         }
@@ -122,7 +123,20 @@ public final class Template {
         return sb.toString();
     }
 
-    static JsonElement value(String name, JsonObject m, JsonObject env) {
+    /** a placeholder's field: the 2.0 snake_case names work too ({plant_id} = {plantId}, {edge.edge_id} = {edge.edgeId}) */
+    private static String field(String name) {
+        if (name.indexOf('_') < 0) {
+            return name;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String part : name.split("\\.")) {
+            sb.append(sb.length() > 0 ? "." : "").append(com.bimba.gateway.canonical.CanonicalV2.camel(part));
+        }
+        return sb.toString();
+    }
+
+    static JsonElement value(String placeholder, JsonObject m, JsonObject env) {
+        String name = field(placeholder);
         switch (name) {
             case "path" -> {
                 return new JsonPrimitive(Json.str(m, "machineId") + "/" + Json.str(m, "tagName"));

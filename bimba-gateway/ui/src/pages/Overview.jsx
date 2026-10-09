@@ -44,6 +44,12 @@ function Body({ st, org, whole }) {
   return (
     <>
       <Verdict kind={kind} title={text} />
+      {(st.quarantine?.records ?? 0) > 0 && (
+        <Msg kind="warn">
+          {st.quarantine.records.toLocaleString()} reading{st.quarantine.records === 1 ? " was" : "s were"} refused because they do not match
+          the BIMBA message format, and are kept in quarantine. <Link to={at("/quarantine")}>Review</Link>
+        </Msg>
+      )}
       <div className="stats">
         {stats.map(([l, v]) => <div className="stat" key={l}><div className="l">{l}</div><div className="v">{v}</div></div>)}
       </div>

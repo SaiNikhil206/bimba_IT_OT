@@ -323,6 +323,25 @@ td small.warnc, td small.bad { display: block; }
 .msg.ask .acts { display: flex; gap: 6px; }
 .msg.ask > :first-child { min-width: 0; flex: 1 1 260px; }
 table.rej td.why { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; max-width: 360px; }
+table.rej td { min-width: 0; }
+table.rej small.why-text { max-width: 420px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+table.rej small.ellipsis { max-width: 260px; }
+.wrap-any { overflow-wrap: anywhere; }
+table.qtab .q-unit { display: none; }
+@media (max-width: 640px) {
+  /* phones: one block per entry instead of a table that scrolls sideways */
+  table.qtab thead { display: none; }
+  table.qtab tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "sel when n" "sel from act" "sel why why";
+    gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  table.qtab tr:last-child { border-bottom: 0; }
+  table.qtab td { padding: 0; border: 0; min-width: 0; }
+  table.qtab .q-sel { grid-area: sel; } table.qtab .q-when { grid-area: when; } table.qtab .q-n { grid-area: n; }
+  table.qtab .q-from { grid-area: from; } table.qtab .q-act { grid-area: act; } table.qtab .q-why { grid-area: why; }
+  table.qtab .q-unit { display: inline; }
+  table.qtab small.why-text, table.qtab small.ellipsis { max-width: none; }
+  table.qtab td.empty { grid-column: 1 / -1; padding: 12px 0; }
+}
 details.adv summary { cursor: pointer; color: var(--text-2); font-weight: 500; font-size: 13px; }
 details.adv[open] summary { margin-bottom: 12px; }
 
@@ -369,6 +388,14 @@ td .ellipsis { max-width: 340px; }          /* one-line labels in table cells ar
 .tag-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .tag-row.head span { font-size: 12px; color: var(--muted); }
 .tag-row input { min-width: 0; }
+.tag-row .row-acts { flex-wrap: nowrap; }
+.btn.ghost.on { border-color: var(--accent); color: var(--accent-ink); }
+.tag-more { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; padding: 8px 10px 10px; margin-top: 4px;
+  background: var(--sunken); border-radius: 8px; }
+.tag-more label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12px; color: var(--muted); }
+.tag-more input { min-width: 0; }
+.tag-more .hint { grid-column: 1 / -1; margin: 0; }
+.tag-more .narrow-only { display: none; }
 .test-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .msg .trust { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 8px; }
 .msg .trust > span { min-width: 0; overflow-wrap: anywhere; }
@@ -398,6 +425,8 @@ td .ellipsis { max-width: 340px; }          /* one-line labels in table cells ar
   .dev-row > .r { grid-column: 3; grid-row: 1; }
   .tag-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .tag-row > :nth-child(3) { display: none; }
+  .tag-more { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tag-more .narrow-only { display: flex; }
   .b-row { grid-template-columns: auto minmax(0, 1fr); }
   .b-val { grid-column: 2; text-align: left; }
 }

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bimba:schema:telemetry:v1",
+  "title": "BIMBA canonical telemetry message, schema version 1.x",
+  "description": "One reading of one tag (docs/payload.md). Every 1.x version validates here: minor versions only add optional fields, so properties not listed are allowed and consumers must ignore them.",
+  "type": "object",
+  "required": ["schemaVersion", "messageId", "plantId", "machineId", "tagName", "timestamp", "tagValue", "dataType", "quality"],
+  "properties": {
+    "schemaVersion": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+    "messageId": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "plantId": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "machineId": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "tagName": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "timestamp": { "$ref": "#/$defs/utc", "description": "when the value was read (UTC)" },
+    "sourceTimestamp": { "$ref": "#/$defs/utc", "description": "since 1.1: the device's own time for the value, when the protocol reports one" },
+    "ingestTime": { "$ref": "#/$defs/utc", "description": "since 1.1: when the gateway accepted the message" },
+    "tagValue": { "type": ["number", "boolean", "string", "null"] },
+    "dataType": { "enum": ["number", "boolean", "string", "null"] },
+    "unit": { "type": ["string", "null"], "maxLength": 40 },
+    "quality": { "enum": ["GOOD", "UNCERTAIN", "BAD"] },
+    "qualityDetail": { "type": ["string", "null"], "maxLength": 2000 },
+    "category": { "type": "string", "maxLength": 40 },
+    "source": { "type": "object" },
+    "edge": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "dataType": { "const": "number" } }, "required": ["dataType"] },
+      "then": { "properties": { "tagValue": { "type": "number" } } } },
+    { "if": { "properties": { "dataType": { "const": "boolean" } }, "required": ["dataType"] },
+      "then": { "properties": { "tagValue": { "type": "boolean" } } } },
+    { "if": { "properties": { "dataType": { "const": "string" } }, "required": ["dataType"] },
+      "then": { "properties": { "tagValue": { "type": "string" } } } },
+    { "if": { "properties": { "dataType": { "const": "null" } }, "required": ["dataType"] },
+      "then": { "properties": { "tagValue": { "type": "null" } } } }
+  ],
+  "$defs": {
+    "utc": { "type": "string", "format": "date-time", "pattern": "Z$" }
+  }
+}

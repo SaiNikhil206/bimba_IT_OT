@@ -1,5 +1,6 @@
 package com.bimba.gateway;
 
+import com.bimba.gateway.canonical.Ingest;
 import com.bimba.gateway.collect.Collector;
 import com.bimba.gateway.config.BimbaConfig;
 import com.bimba.gateway.config.DestinationStore;
@@ -39,6 +40,7 @@ public class GatewayService {
     private final File configFile;
     private final DestinationStore destinations;
     private final Db db;
+    private final Ingest ingest;
     private final Instant startedAt = Instant.now();
     private ScheduledExecutorService scheduler;
     private volatile BimbaConfig config;
@@ -51,9 +53,10 @@ public class GatewayService {
     private volatile java.util.function.Supplier<List<Map<String, Object>>> agentTags = List::of;
 
     public GatewayService(@Value("${bimba.config-dir:config}") File configDir, @Value("${bimba.data-dir:data}") File dataDir,
-                          DestinationStore destinations, Db db) {
+                          DestinationStore destinations, Db db, Ingest ingest) {
         this.destinations = destinations;
         this.db = db;
+        this.ingest = ingest;
         this.configDir = configDir;
         this.dataDir = dataDir;
         this.configFile = new File(configDir, "config.json");
@@ -140,7 +143,9 @@ public class GatewayService {
             problems.forEach(p -> log.warn("tag tree: {}", p));
             delivery = new DeliveryEngine(next, dataDir, db);
             delivery.start();
-            collector = new Collector(next.plantId, next.edgeId, next.pollMs, tags, sources, delivery::offer);
+            DeliveryEngine engine = delivery;
+            // every reading is checked against its schema first; invalid ones go to the quarantine (canonical/Ingest)
+            collector = new Collector(next.plantId, next.edgeId, next.pollMs, tags, sources, m -> ingest.fromCollector(m, engine::offer));
             collector.start();
             configError = null;
             log.info("BIMBA Gateway running: plant={} edge={} tags={}", next.plantId, next.edgeId, tags.size());
@@ -216,6 +221,7 @@ public class GatewayService {
         DeliveryEngine del = delivery;
         m.put("collector", withAgents(col == null ? null : col.status()));
         m.put("delivery", del == null ? null : del.status());
+        m.put("quarantine", ingest.quarantine().status());
         return m;
     }
 

@@ -122,7 +122,7 @@ public class SystemController {
                                       @RequestHeader(value = "Authorization", required = false) String auth)
             throws ApiException, AgentRegistry.ApiError {
         ready(req);
-        return sources.readings(caller(req, agentId, auth), ApiErrors.parse(body), req.getRemoteAddr());
+        return sources.readings(caller(req, agentId, auth), body, req.getRemoteAddr());      // parsed there: bad bodies are quarantined
     }
 
     /** first certificate (with the agent secret) or renewal (with the current certificate); body {csr} */

@@ -24,6 +24,8 @@ public abstract class Destination implements AutoCloseable {
     protected final BimbaConfig.Destination cfg;
     /** this destination's own layout of a reading, or null = the BIMBA message as it is */
     protected final Template template;
+    /** message format major version it receives: 1 (camelCase) or 2 (BRD canonical envelope, snake_case) */
+    protected final int major;
     private volatile long retryAt = 0;
     private volatile String lastError;
     private volatile long lastSuccessAt;
@@ -45,25 +47,50 @@ public abstract class Destination implements AutoCloseable {
             LoggerFactory.getLogger("BIMBA.Delivery").warn("destination {}: template ignored, {}", cfg.name, e.getMessage());
         }
         this.template = t;
+        this.major = "2".equals(cfg.schemaVersion) && !"database".equalsIgnoreCase(cfg.transport) ? 2 : 1;
     }
 
-    /** a reading as this destination sends it */
+    /** a reading as this destination sends it: its template, else the BIMBA message in its format version */
     protected JsonElement layout(JsonObject message, JsonObject envelope) {
-        return template == null ? message : template.render(message, envelope);
+        if (template != null) {
+            return template.render(message, envelope);
+        }
+        return major == 2 ? com.bimba.gateway.canonical.CanonicalV2.message(message) : message;
     }
 
-    /** the batch envelope with every reading in this destination's layout (unchanged without a template) */
+    /** readings are sent differently from the gateway's own 1.x layout (template or format 2) */
+    protected boolean mapsReadings() {
+        return template != null || major == 2;
+    }
+
+    /**
+     * The batch envelope as this destination sends it: every reading in its layout; format 2 = the BRD batch form
+     * {schema_version, batch_id, plant_id, ..., records:[..]}. Unchanged for format 1 without a template.
+     */
     protected byte[] mappedEnvelope(byte[] batch) {
-        if (template == null) {
+        if (!mapsReadings()) {
             return batch;
         }
         JsonObject env = Json.GSON.fromJson(new String(batch, StandardCharsets.UTF_8), JsonObject.class);
         JsonArray mapped = new JsonArray();
         for (JsonElement m : env.getAsJsonArray("messages")) {
-            mapped.add(template.render(m.getAsJsonObject(), env));
+            mapped.add(layout(m.getAsJsonObject(), env));
+        }
+        if (major == 2) {
+            return Json.GSON.toJson(com.bimba.gateway.canonical.CanonicalV2.envelope(env, mapped)).getBytes(StandardCharsets.UTF_8);
         }
         env.add("messages", mapped);
         return Json.GSON.toJson(env).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** a header / property name in this destination's format: batchId (1) or batch_id (2) */
+    protected String key(String camel) {
+        return major == 2 ? com.bimba.gateway.canonical.CanonicalV2.snake(camel) : camel;
+    }
+
+    /** the schema version this destination's batches carry */
+    protected String version(JsonObject envelope) {
+        return major == 2 ? com.bimba.gateway.canonical.CanonicalV2.VERSION : Json.str(envelope, "schemaVersion");
     }
 
     /** db: the gateway's connection to the shared database, for the built-in BIMBA database destination (may be null) */

@@ -36,7 +36,8 @@ import java.util.concurrent.TimeUnit;
  * BIMBA edge collector: the data-collection process of the BIMBA Site Agent on a SCADA machine. The agent service
  * (bimba-site-agent.exe) starts it and talks JSON lines over stdin/stdout:
  * <pre>
- * in   {"op":"config","plantId":..,"edgeId":..,"sources":[{id,name,kind,settings,tags:[{name,address,unit,dataType,machine}],pollMs,enabled}]}
+ * in   {"op":"config","plantId":..,"edgeId":..,"sources":[{id,name,kind,settings,tags:[{name,address,unit,dataType,machine,
+ *       rawLow,rawHigh,scaledLow,scaledHigh,sourceUnit,engLow,engHigh}],pollMs,enabled}]}
  *      (a tag's machine: it reports as that machine instead of the source's name, so one connection feeds several machines)
  *      {"op":"test"|"browse"|"scan"|"read","id":..,"source":{kind,settings},"nodeId":..,"limit":..,"tags":[..]}
  * out  {"type":"reading","m":{canonical message}}       every change of value or quality (docs/payload.md)
@@ -167,7 +168,7 @@ public final class EdgeMain {
         boolean scaled = t.has("rawLow") && t.has("rawHigh") && t.has("scaledLow") && t.has("scaledHigh");
         return new TagModel.Tag(machine, name, machine + "/" + name, "modbus".equals(kind) ? TagModel.Kind.MODBUS : TagModel.Kind.OPCUA,
                 sourceId, address, str(t, "dataType"), str(t, "unit"), num(t, "rawLow"), num(t, "rawHigh"), num(t, "scaledLow"),
-                num(t, "scaledHigh"), scaled);
+                num(t, "scaledHigh"), scaled, str(t, "sourceUnit"), TagModel.optNum(t, "engLow"), TagModel.optNum(t, "engHigh"));
     }
 
     private synchronized void stopCollector() {
@@ -245,6 +246,7 @@ public final class EdgeMain {
                 v.put("address", tags.get(i).address());
                 v.put("value", values.get(i).value());
                 v.put("good", values.get(i).good());
+                v.put("quality", values.get(i).quality().name());
                 v.put("detail", values.get(i).detail());
                 out.add(v);
             }

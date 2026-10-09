@@ -61,9 +61,9 @@ public class EventStreamsDestination extends Destination {
             for (JsonElement m : envelope.getAsJsonArray("messages")) {
                 JsonObject msg = m.getAsJsonObject();
                 JsonObject p = baseProperties(envelope);
-                p.addProperty("messageId", msg.get("messageId").getAsString());
-                p.addProperty("machineId", msg.get("machineId").getAsString());
-                p.addProperty("tagName", msg.get("tagName").getAsString());
+                p.addProperty(key("messageId"), msg.get("messageId").getAsString());
+                p.addProperty(key("machineId"), msg.get("machineId").getAsString());
+                p.addProperty(key("tagName"), msg.get("tagName").getAsString());
                 payloads.add(Json.GSON.toJson(layout(msg, envelope)));
                 props.add(p);
             }
@@ -154,12 +154,13 @@ public class EventStreamsDestination extends Destination {
         throw new java.io.IOException(detail); // 401/403 (token), 404 (topic), 429 (rate limit), 5xx -> fail over
     }
 
-    private static JsonObject baseProperties(JsonObject envelope) {
+    /** message properties; snake_case names for format 2 */
+    private JsonObject baseProperties(JsonObject envelope) {
         JsonObject p = new JsonObject();
-        p.addProperty("schemaVersion", str(envelope, "schemaVersion"));
-        p.addProperty("batchId", str(envelope, "batchId"));
-        p.addProperty("plantId", str(envelope, "plantId"));
-        p.addProperty("edgeId", str(envelope, "edgeId"));
+        p.addProperty(key("schemaVersion"), version(envelope));
+        p.addProperty(key("batchId"), str(envelope, "batchId"));
+        p.addProperty(key("plantId"), str(envelope, "plantId"));
+        p.addProperty(key("edgeId"), str(envelope, "edgeId"));
         p.addProperty("source", "bimba-it-ot-agent");
         return p;
     }

@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
  * kafkaMode "batch"   (default): one record per plugin batch, key = edgeId, value = batch envelope JSON
  * kafkaMode "message"          : one record per tag value, key = machineId/tagName (per-tag ordering
  *                                within a partition), value = canonical message JSON
- * Headers: batchId, plantId, edgeId, schemaVersion (+ messageId in message mode).
+ * Headers: batchId, plantId, edgeId, schemaVersion (+ messageId in message mode); snake_case for format 2.
  * Delivery = acks=all, idempotent producer; send() returns only after every record is acknowledged.
  * Extra client settings (security.protocol, sasl.mechanism, sasl.jaas.config, ssl.*) go in "kafka".
  */
@@ -57,7 +57,7 @@ public class KafkaDestination extends Destination {
                 ProducerRecord<String, byte[]> rec = new ProducerRecord<>(topic, key,
                         Json.GSON.toJson(layout(m, envelope)).getBytes(StandardCharsets.UTF_8));
                 headers(rec, envelope);
-                rec.headers().add(new RecordHeader("messageId", bytes(m.get("messageId").getAsString())));
+                rec.headers().add(new RecordHeader(key("messageId"), bytes(m.get("messageId").getAsString())));
                 acks.add(producer.send(rec));
             }
         } else {
@@ -182,10 +182,12 @@ public class KafkaDestination extends Destination {
         return v.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    private static void headers(ProducerRecord<String, byte[]> rec, JsonObject env) {
-        for (String k : new String[]{"batchId", "plantId", "edgeId", "schemaVersion"}) {
-            rec.headers().add(new RecordHeader(k, bytes(str(env, k))));
+    /** batchId, plantId, edgeId, schemaVersion (format 2: batch_id, plant_id, edge_id, schema_version = 2.0) */
+    private void headers(ProducerRecord<String, byte[]> rec, JsonObject env) {
+        for (String k : new String[]{"batchId", "plantId", "edgeId"}) {
+            rec.headers().add(new RecordHeader(key(k), bytes(str(env, k))));
         }
+        rec.headers().add(new RecordHeader(key("schemaVersion"), bytes(version(env))));
     }
 
     private static byte[] bytes(String s) {

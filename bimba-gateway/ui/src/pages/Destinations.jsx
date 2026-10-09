@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
@@ -106,7 +106,8 @@ function Row({ d, mark, manage, onEdit }) {
   return (
     <tr className={d.usedBy.length ? "" : "off"} {...mark}>
       <td><b>{d.name}</b><small className="mono ep" title={endpoint(d)}>{endpoint(d)}</small></td>
-      <td className="nowrap">{serviceOf(d).label}<small>{TRANSPORT[d.transport] ?? d.transport}</small></td>
+      <td className="nowrap">{serviceOf(d).label}<small>{TRANSPORT[d.transport] ?? d.transport}
+        {d.transport !== "database" && d.format !== "influx-line" && ` · format ${String(d.schemaVersion) === "2" ? "2.0" : "1.x"}`}</small></td>
       <td>
         {d.usedBy.length === 0 && <span className="muted small">No pipeline · no data</span>}
         {d.usedBy.map((u) => (
@@ -182,6 +183,7 @@ const blank = {
   bootstrapServers: "", kafkaMode: "batch", securityProtocol: "PLAINTEXT", saslMechanism: "PLAIN", mqttMode: "batch", template: "",
   healthCheck: true, maxRetryAfterSeconds: 300, maxBatchMessages: 0, compress: false, retain: false, maxInflight: 100,
   proxy: "", proxyUsername: "", proxyPassword: "", tlsCa: "", tlsCert: "", tlsKey: "",
+  schemaVersion: "1",              // destinations saved before format 2.0 existed keep 1.x
 };
 
 const pairs = (o) => Object.entries(o || {}).map(([k, v]) => ({ k, v: String(v ?? "") }));
@@ -196,8 +198,8 @@ function DestinationDialog({ d, service, mask, names, onClose, onBack, onSaved, 
   const at = useOrgPath();
   const isNew = !d;
   const [f, setF] = useState(() => (isNew
-    ? { ...blank, ...service.defaults, auth: { ...blank.auth, ...service.defaults?.auth }, service: service.key, transport: service.transport,
-      name: freeName(service.key, names) }
+    ? { ...blank, schemaVersion: "2", ...service.defaults, auth: { ...blank.auth, ...service.defaults?.auth }, service: service.key,
+      transport: service.transport, name: freeName(service.key, names) }
     : { ...blank, ...d, auth: { type: "none", ...d.auth } }));
   const [headers, setHeaders] = useState(() => pairs(isNew ? service.defaults?.headers : d.headers));
   const [props, setProps] = useState(() => pairs(d?.kafka));
@@ -570,7 +572,7 @@ const FIELDS = ["plantId", "machineId", "tagName", "path", "tagValue", "unit", "
 
 /** What the BIMBA standard message holds, field by field (collect/Collector.java builds it; delivery/Sampler adds aggregate). */
 const GUIDE = [
-  ["schemaVersion", "Version of this message format", "1.0"],
+  ["schemaVersion", "Version of this message format", "1.1"],
   ["messageId", "Unique id of this reading; use it to drop duplicates after a retry", "0b6c…4b5c"],
   ["plantId", "Plant the gateway belongs to", "PLANT01"],
   ["machineId", "Machine (folder in the tag tree)", "PUMP-P1"],
@@ -584,8 +586,20 @@ const GUIDE = [
   ["source", "Where it was read: protocol (modbus · opcua · expression), gateway, device/address", "modbus · PLC/40001"],
   ["edge", "Which gateway sent it: edgeId, session (one per start) and seq (a gap = a lost reading)", "seq 1842"],
   ["aggregate", "Only from Snapshot / Average pipelines: fn, min, max, count, from, to", "avg · 9 readings"],
-  ["sourceTimestamp", "Only from Snapshot / Average pipelines: when the value was read", ""],
+  ["sourceTimestamp", "The device's own time for the value, when it reports one (OPC UA)", ""],
+  ["ingestTime", "When the gateway accepted the reading", "2026-10-07T10:15:30.262Z"],
 ];
+/** what differs in format 2.0: [description, example] */
+const GUIDE_V2 = {
+  schemaVersion: ["Version of this message format", "2.0"],
+  dataType: ["Double · Boolean · String · null", "Double"],
+  source: ["Where it was read: path (DIRECT = BIMBA adapters, IGNITION), protocol (OPCUA · MODBUS_TCP · EXPRESSION), address, interface (BIMBA_GATEWAY · BIMBA_SITE_AGENT)", "DIRECT · MODBUS_TCP"],
+};
+
+const v2 = (f) => String(f.schemaVersion) === "2";
+const list = (f) => (v2(f) ? "records" : "messages");
+/** a 1.x field name as format 2.0 writes it: machineId -> machine_id */
+const snake = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
 /** how this destination puts readings on the wire, from the form */
 function shape(f) {
@@ -595,34 +609,39 @@ function shape(f) {
     if (f.format === "ndjson") return { ...per, text: "Each batch is sent as lines of JSON, one reading per line." };
     if (f.format === "splunk-hec") return { ...per, text: "Each reading becomes one Splunk event (the reading is the event's \"event\")." };
     if (f.format === "elastic-bulk") return { ...per, text: "Each reading becomes one Elasticsearch document (plus @timestamp)." };
-    return { kind: "batch", text: "Each batch is sent as one JSON document: a few batch fields and the readings in \"messages\"." };
+    return { kind: "batch", text: `Each batch is sent as one JSON document: a few batch fields and the readings in "${list(f)}".` };
   }
   const mode = f.transport === "kafka" ? f.kafkaMode : f.transport === "mqtt" ? f.mqttMode : f.esMode;
   const unit = f.transport === "kafka" ? "Kafka record" : f.transport === "mqtt" ? "MQTT message" : "Event Streams message";
   return mode === "message" ? { ...per, text: `Each reading is sent as its own ${unit}.` }
-    : { kind: "batch", text: `Each batch is sent as one ${unit}: a few batch fields and the readings in "messages".` };
+    : { kind: "batch", text: `Each batch is sent as one ${unit}: a few batch fields and the readings in "${list(f)}".` };
 }
 
 /** How each reading is written: the BIMBA message (with an example and a field guide), or the destination's own JSON template. */
 function Layout({ f, set, preview, setPreview }) {
   const custom = typeof f.template === "string" && f.template.trim() !== "";
   const [open, setOpen] = useState(custom);
-  const [example, setExample] = useState(null);     // the standard message + batch, loaded when first shown
+  const [example, setExample] = useState(null);     // the standard message + batch, loaded while it is shown
+  const [showExample, setShowExample] = useState(false);
   const ref = useRef(null);
   const sh = shape(f);
+  const version = String(f.schemaVersion ?? "1");
+  useEffect(() => {                                  // the example shows the chosen format (loaded again when it changes)
+    let live = true;
+    setExample(null);
+    if (showExample) {
+      api("destinations/preview", { method: "POST", body: { template: "", schemaVersion: version, transport: f.transport } })
+        .then((r) => live && setExample(r))
+        .catch((e) => live && setExample({ error: e.message }));
+    }
+    return () => { live = false; };
+  }, [showExample, version, f.transport]);
+  useEffect(() => setPreview(null), [version, setPreview]);
   const run = async (template) => {
     try {
-      setPreview(await api("destinations/preview", { method: "POST", body: { template } }));
+      setPreview(await api("destinations/preview", { method: "POST", body: { template, schemaVersion: version, transport: f.transport } }));
     } catch (e) {
       setPreview({ error: e.message });
-    }
-  };
-  const loadExample = async () => {
-    if (example) return;
-    try {
-      setExample(await api("destinations/preview", { method: "POST", body: { template: "" } }));
-    } catch (e) {
-      setExample({ error: e.message });
     }
   };
   const insert = (name) => {
@@ -637,7 +656,14 @@ function Layout({ f, set, preview, setPreview }) {
   const wire = (pv) => (sh.kind === "batch" ? pv.batch : sh.kind === "array" ? arrayOf(pv.batch) : pv.rendered);
   return (
     <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
-      <legend className="label" style={{ marginBottom: 6 }}>Message layout</legend>
+      <legend className="label" style={{ marginBottom: 6 }}>Message format</legend>
+      <div className="seg two" style={{ marginBottom: 14 }}>
+        <label><input type="radio" name="d-version" checked={version === "2"} onChange={() => set("schemaVersion", "2")} />
+          <b>2.0 · canonical envelope</b><small>The BRD canonical format: snake_case fields (plant_id, tag_value, ...), batches in "records".</small></label>
+        <label><input type="radio" name="d-version" checked={version !== "2"} onChange={() => set("schemaVersion", "1")} />
+          <b>1.x · BIMBA classic</b><small>camelCase fields (plantId, tagValue, ...). For receivers built before 2.0, like BIMBA Ingest.</small></label>
+      </div>
+      <span className="label" style={{ marginBottom: 6 }}>Message layout</span>
       <div className="seg two">
         <label><input type="radio" name="d-layout" checked={!open} onChange={() => { setOpen(false); set("template", ""); setPreview(null); }} />
           <b>BIMBA standard message</b><small>Every field of the reading, as the BIMBA database and the BIMBA tools expect it.</small></label>
@@ -646,7 +672,7 @@ function Layout({ f, set, preview, setPreview }) {
       </div>
 
       {!open && (
-        <details className="adv std" onToggle={(e) => e.currentTarget.open && loadExample()}>
+        <details className="adv std" onToggle={(e) => setShowExample(e.currentTarget.open)}>
           <summary>What does the BIMBA standard message look like?</summary>
           <p className="small">{sh.text}</p>
           {example?.error ? <Msg>{example.error}</Msg> : (
@@ -660,7 +686,8 @@ function Layout({ f, set, preview, setPreview }) {
                 <table className="fields">
                   <tbody>
                     {GUIDE.map(([k, what, eg]) => (
-                      <tr key={k}><td className="mono">{k}</td><td>{what}{eg && <small>e.g. {eg}</small>}</td></tr>
+                      <tr key={k}><td className="mono">{v2(f) ? snake(k) : k}</td>
+                        <td>{(v2(f) && GUIDE_V2[k]?.[0]) || what}{(v2(f) ? GUIDE_V2[k]?.[1] ?? eg : eg) && <small>e.g. {v2(f) ? GUIDE_V2[k]?.[1] ?? eg : eg}</small>}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -675,7 +702,7 @@ function Layout({ f, set, preview, setPreview }) {
           <div className="field">
             <textarea ref={ref} rows={10} className="mono" value={f.template ?? ""} spellCheck="false"
                       onChange={(e) => set("template", e.target.value)} aria-label="Template" />
-            <div className="tagset">{FIELDS.map((n) => <button type="button" key={n} className="chip" onClick={() => insert(n)} title="Insert at the cursor">{`{${n}}`}</button>)}</div>
+            <div className="tagset">{FIELDS.map((n) => (v2(f) ? snake(n) : n)).map((n) => <button type="button" key={n} className="chip" onClick={() => insert(n)} title="Insert at the cursor">{`{${n}}`}</button>)}</div>
             <span className="hint">"{"{tagValue}"}" alone keeps the number type; inside text it becomes text. With Snapshot / Average pipelines,
               {" {aggregate.min}"}, {"{aggregate.max}"}, {"{aggregate.count}"} are filled too.</span>
             <div><button type="button" className="btn ghost sm" onClick={() => run(f.template)}>Preview</button></div>

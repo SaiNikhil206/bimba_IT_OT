@@ -38,7 +38,9 @@ public class RestDestination extends Destination {
 
     @Override
     public void send(byte[] batch) throws Exception {
-        Formats.Body body = Formats.render(format(), batch, cfg.url, template == null ? null : this::layout);
+        // envelope: the batch in this destination's format version (2 = the BRD batch form with records[])
+        Formats.Body body = "envelope".equalsIgnoreCase(format()) ? new Formats.Body(mappedEnvelope(batch), "application/json")
+                : Formats.render(format(), batch, cfg.url, mapsReadings() ? this::layout : null);
         if (body.bytes().length == 0) {
             return;                                    // nothing this format can carry (e.g. only empty values)
         }

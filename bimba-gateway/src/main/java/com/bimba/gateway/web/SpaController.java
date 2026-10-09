@@ -14,10 +14,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 public class SpaController {
     private static final String ORG = "{org:[a-z0-9][a-z0-9-]*}";
 
-    @GetMapping({"/overview", "/pipelines", "/destinations", "/delivery", "/agents", "/users", "/roles", "/audit", "/profile", "/login",
+    @GetMapping({"/overview", "/pipelines", "/destinations", "/delivery", "/quarantine", "/agents", "/users", "/roles", "/audit", "/profile", "/login",
             "/organizations", "/forgot-password", "/reset-password",
             "/pipelines/{uid}", "/destinations/{uid}", "/users/{uid}", "/roles/{uid}", "/organizations/{uid}", "/agents/{uid}",
-            "/" + ORG + "/{page:overview|agents|pipelines|destinations|delivery|users|roles|audit}",
+            "/" + ORG + "/{page:overview|agents|pipelines|destinations|delivery|quarantine|users|roles|audit}",
             "/" + ORG + "/{page:pipelines|destinations|users|roles|agents}/{uid}"})
     String page() {
         return "forward:/index.html";

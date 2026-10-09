@@ -43,7 +43,8 @@ public class DestinationService {
     /** keys this editor owns; any other key of a destination is kept when it is saved */
     private static final Set<String> MANAGED = new HashSet<>(List.of("id", "uid", "name", "service", "role", "enabled", "transport", "timeoutMs",
             "retryAfterSeconds", "status", "usedBy", "live", "tlsInfo", "healthCheck", "maxRetryAfterSeconds", "maxBatchMessages",
-            "tlsCa", "tlsCert", "tlsKey", "proxy", "proxyUsername", "proxyPassword", "compress", "retain", "maxInflight"));
+            "tlsCa", "tlsCert", "tlsKey", "proxy", "proxyUsername", "proxyPassword", "compress", "retain", "maxInflight",
+            "schemaVersion"));
 
     static {
         FIELDS.values().forEach(MANAGED::addAll);
@@ -270,10 +271,11 @@ public class DestinationService {
         env.addProperty("plantId", c == null ? "PLANT01" : c.plantId);
         env.addProperty("edgeId", c == null ? "bimba-gw01" : c.edgeId);
         JsonObject m = com.google.gson.JsonParser.parseString("""
-                {"schemaVersion":"1.0","messageId":"0b6c2d6e-3a54-4a8a-9c0e-6f1d2f3a4b5c","plantId":"%s","machineId":"PUMP-P1",
+                {"schemaVersion":"%s","messageId":"0b6c2d6e-3a54-4a8a-9c0e-6f1d2f3a4b5c","plantId":"%s","machineId":"PUMP-P1",
                  "timestamp":"2026-10-07T10:15:30.250Z","tagName":"Flow","tagValue":42.7,"dataType":"number","unit":"m3/h",
                  "quality":"GOOD","category":"telemetry","source":{"protocol":"modbus","system":"%s","address":"PLC/40001"},
-                 "edge":{"edgeId":"%s","session":"a1b2c3","seq":1842}}""".formatted(Json.str(env, "plantId"), Json.str(env, "edgeId"),
+                 "edge":{"edgeId":"%s","session":"a1b2c3","seq":1842},"ingestTime":"2026-10-07T10:15:30.262Z"}"""
+                .formatted(com.bimba.gateway.collect.Canonical.VERSION, Json.str(env, "plantId"), Json.str(env, "edgeId"),
                 Json.str(env, "edgeId"))).getAsJsonObject();
         Map<String, Object> out = new LinkedHashMap<>();
         // a second reading of another type, for the batch example
@@ -286,21 +288,30 @@ public class DestinationService {
         m2.getAsJsonObject("source").addProperty("address", "PLC/00001");
         m2.getAsJsonObject("edge").addProperty("seq", 1843);
         JsonObject batch = new JsonObject();
-        batch.addProperty("schemaVersion", "1.0");
+        batch.addProperty("schemaVersion", com.bimba.gateway.collect.Canonical.VERSION);
         batch.addProperty("batchId", Json.str(env, "batchId"));
         batch.addProperty("plantId", Json.str(env, "plantId"));
         batch.addProperty("edgeId", Json.str(env, "edgeId"));
         batch.addProperty("source", "bimba-gateway");
         batch.addProperty("createdAt", "2026-10-07T10:15:31.000Z");
         batch.addProperty("count", 2);
+        // what the destination sends: its template, else the message in its format version (2 = BRD canonical envelope)
+        boolean v2 = "2".equals(str(in, "schemaVersion").trim()) && !"database".equalsIgnoreCase(str(in, "transport"));
+        com.bimba.gateway.delivery.Template tpl = t;
+        java.util.function.Function<JsonObject, JsonElement> layout = x -> tpl != null ? tpl.render(x, env)
+                : v2 ? com.bimba.gateway.canonical.CanonicalV2.message(x) : x;
         com.google.gson.JsonArray readings = new com.google.gson.JsonArray();
-        readings.add(t == null ? m : t.render(m, env));
-        readings.add(t == null ? m2 : t.render(m2, env));
-        batch.add("messages", readings);
+        readings.add(layout.apply(m));
+        readings.add(layout.apply(m2));
         // as JSON text: numbers stay exactly as they are sent (no 1.79E12 for a millisecond timestamp)
-        out.put("message", Json.PRETTY.toJson(m));
-        out.put("rendered", Json.PRETTY.toJson(t == null ? m : t.render(m, env)));
-        out.put("batch", Json.PRETTY.toJson(batch));
+        out.put("message", Json.PRETTY.toJson(v2 ? com.bimba.gateway.canonical.CanonicalV2.message(m) : m));
+        out.put("rendered", Json.PRETTY.toJson(layout.apply(m)));
+        if (v2) {
+            out.put("batch", Json.PRETTY.toJson(com.bimba.gateway.canonical.CanonicalV2.envelope(batch, readings)));
+        } else {
+            batch.add("messages", readings);
+            out.put("batch", Json.PRETTY.toJson(batch));
+        }
         out.put("fields", com.bimba.gateway.delivery.Template.FIELDS);
         return out;
     }
@@ -329,7 +340,7 @@ public class DestinationService {
         c.resolveEnv();
         String now = java.time.Instant.now().toString();
         JsonObject m = new JsonObject();
-        m.addProperty("schemaVersion", "1.0");
+        m.addProperty("schemaVersion", com.bimba.gateway.collect.Canonical.VERSION);
         m.addProperty("messageId", java.util.UUID.randomUUID().toString());
         m.addProperty("plantId", c.plantId);
         m.addProperty("machineId", "BIMBA-TEST");
@@ -340,6 +351,7 @@ public class DestinationService {
         m.addProperty("unit", "");
         m.addProperty("quality", "GOOD");
         m.addProperty("category", "test");
+        m.addProperty("ingestTime", now);
         JsonObject src = new JsonObject();
         src.addProperty("protocol", "test");
         src.addProperty("system", c.edgeId);
@@ -350,7 +362,7 @@ public class DestinationService {
         edge.addProperty("session", "test");
         m.add("edge", edge);
         JsonObject env = new JsonObject();
-        env.addProperty("schemaVersion", "1.0");
+        env.addProperty("schemaVersion", com.bimba.gateway.collect.Canonical.VERSION);
         env.addProperty("batchId", java.util.UUID.randomUUID().toString());
         env.addProperty("plantId", c.plantId);
         env.addProperty("edgeId", c.edgeId);
@@ -423,6 +435,8 @@ public class DestinationService {
         int retry = d.get("retryAfterSeconds").getAsInt();
         d.addProperty("maxRetryAfterSeconds", Math.max(retry, integer(in, "maxRetryAfterSeconds", Math.max(retry, 300), 1, 86_400, "Longest retry wait")));
         d.addProperty("maxBatchMessages", integer(in, "maxBatchMessages", 0, 0, 100_000, "Readings per request"));
+        // message format: 1 = BIMBA 1.x (camelCase; what every destination got before 2.0), 2 = BRD canonical envelope
+        d.addProperty("schemaVersion", "database".equals(transport) ? "1" : choice(in, "schemaVersion", "1", Set.of("1", "2"), "Message format"));
 
         // certificates (PEM): authorities to trust, client certificate + key (a secret)
         String ca = str(in, "tlsCa").trim();

@@ -4,6 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import com.bimba.gateway.collect.Units;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -19,10 +21,15 @@ import java.util.regex.Pattern;
  *       "opcServer": "BIMBA Modbus", "opcItemPath": "ns=1;s=[PLC]HR2",   Modbus device PLC, holding register 2
  *       "dataType": "Float8", "engUnit": "m3/h", "scaleMode": "Linear", "rawLow": 0, "rawHigh": 10, "scaledLow": 0, "scaledHigh": 1 },
  *     { "name": "bus_voltage", "valueSource": "opc", "opcServer": "METER", "opcItemPath": "ns=2;s=Meter.Voltage" },  OPC UA device METER
+ *     { "name": "oil_temp", ..., "engUnit": "degC", "sourceUnit": "degF", "engLow": 0, "engHigh": 120 },  converted, range-checked
  *     { "name": "speed", "valueSource": "expr", "expression": "240 + 15 * sin(toMillis(now(1000)) / 60000.0)" } ]}]}
  * </pre>
  * The layout is the Ignition tag-export format, so tag exports from an existing Ignition installation can be used
  * unchanged ("Ignition OPC UA Server" is accepted as the Modbus driver name).
+ * <p>
+ * Engineering values: a reading is scaled first (scaleMode Linear: raw range -> scaled range), then converted from the
+ * device's unit (sourceUnit, optional) to the tag's unit (engUnit, see {@link Units}). A value outside the engineering
+ * range (engLow / engHigh, either optional, in engUnit) is delivered with quality UNCERTAIN.
  */
 public final class TagModel {
     public static final String MODBUS_DRIVER = "BIMBA Modbus";
@@ -33,13 +40,40 @@ public final class TagModel {
     /** One tag: which machine/tag name it reports as, and where its value comes from. */
     public record Tag(String machine, String name, String path, Kind kind, String device, String address,
                       String dataType, String unit, double rawLow, double rawHigh, double scaledLow, double scaledHigh,
-                      boolean scaled) {
+                      boolean scaled, String sourceUnit, Double engLow, Double engHigh) {
         /** raw device value -> engineering value (Linear scaling) */
         public double scale(double raw) {
             if (!scaled || rawHigh == rawLow) {
                 return raw;
             }
             return (raw - rawLow) * (scaledHigh - scaledLow) / (rawHigh - rawLow) + scaledLow;
+        }
+
+        /** the device reports in another unit than the tag's: values are converted (sourceUnit -> unit) */
+        public boolean converts() {
+            return sourceUnit != null && !sourceUnit.isBlank() && unit != null && !unit.isBlank() && !sourceUnit.trim().equals(unit.trim());
+        }
+
+        /** inside the engineering range (bounds that are not set do not limit) */
+        public boolean inRange(double v) {
+            return (engLow == null || v >= engLow) && (engHigh == null || v <= engHigh);
+        }
+
+        /** why the engineering settings cannot work (unknown units, low above high), null when they can */
+        public String engineeringProblem() {
+            if (sourceUnit != null && !sourceUnit.isBlank() && (unit == null || unit.isBlank())) {
+                return "device unit " + sourceUnit + " needs a unit to convert to";
+            }
+            if (converts()) {
+                String p = Units.problem(sourceUnit.trim(), unit.trim());
+                if (p != null) {
+                    return p;
+                }
+            }
+            if (engLow != null && engHigh != null && engLow > engHigh) {
+                return "engLow " + engLow + " is above engHigh " + engHigh;
+            }
+            return null;
         }
     }
 
@@ -119,8 +153,15 @@ public final class TagModel {
             return null;
         }
         boolean scaled = "Linear".equals(str(t, "scaleMode"));
-        return new Tag(machine, tagName, path, kind, device, address, str(t, "dataType"), str(t, "engUnit"),
-                num(t, "rawLow", 0), num(t, "rawHigh", 1), num(t, "scaledLow", 0), num(t, "scaledHigh", 1), scaled);
+        Tag tag = new Tag(machine, tagName, path, kind, device, address, str(t, "dataType"), str(t, "engUnit"),
+                num(t, "rawLow", 0), num(t, "rawHigh", 1), num(t, "scaledLow", 0), num(t, "scaledHigh", 1), scaled,
+                str(t, "sourceUnit"), optNum(t, "engLow"), optNum(t, "engHigh"));
+        String why = tag.engineeringProblem();
+        if (why != null) {
+            problems.add(path + ": " + why);        // not collected: a wrong unit is worse than no value
+            return null;
+        }
+        return tag;
     }
 
     public static boolean isModbusDriver(String server) {
@@ -131,6 +172,16 @@ public final class TagModel {
     private static String str(JsonObject o, String k) {
         JsonElement e = o.get(k);
         return e != null && e.isJsonPrimitive() ? e.getAsString() : null;
+    }
+
+    /** a number, or null when the field is missing, empty or not a number */
+    public static Double optNum(JsonObject o, String k) {
+        JsonElement e = o.get(k);
+        try {
+            return e != null && e.isJsonPrimitive() && !e.getAsString().isBlank() ? e.getAsDouble() : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private static double num(JsonObject o, String k, double fallback) {

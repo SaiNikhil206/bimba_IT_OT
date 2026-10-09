@@ -820,9 +820,21 @@ function DeviceList({ devs, onChange }) {
   );
 }
 
+/** a tag uses unit conversion or an engineering range */
+const engineered = (t) => [t.sourceUnit, t.engLow, t.engHigh].some((v) => v !== undefined && v !== null && String(v).trim() !== "");
+
 function TagTable({ kind, tags, onChange, onBrowse }) {
+  const [more, setMore] = useState(() => new Set());       // rows whose unit / range settings are open
   const upd = (i, k, v) => onChange(tags.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
-  const del = (i) => onChange(tags.filter((_, j) => j !== i));
+  const del = (i) => {
+    setMore(new Set());
+    onChange(tags.filter((_, j) => j !== i));
+  };
+  const toggle = (i) => setMore((s) => {
+    const n = new Set(s);
+    if (n.has(i)) n.delete(i); else n.add(i);
+    return n;
+  });
   const add = () => onChange([...tags, { name: "", address: kind === "modbus" ? "HR1" : "", unit: "" }]);
   return (
     <div className="field">
@@ -837,11 +849,31 @@ function TagTable({ kind, tags, onChange, onBrowse }) {
         <div className="tags">
           <div className="tag-row head"><span>Name</span><span>{kind === "opcua" ? "Node id" : "Address"}</span><span>Unit</span><span /></div>
           {tags.map((t, i) => (
-            <div className="tag-row" key={i}>
-              <input type="text" aria-label="Tag name" value={t.name ?? ""} onChange={(e) => upd(i, "name", e.target.value)} placeholder="name" />
-              <input type="text" aria-label="Address" className="mono" value={t.address ?? ""} onChange={(e) => upd(i, "address", e.target.value)} title={t.address} />
-              <input type="text" aria-label="Unit" value={t.unit ?? ""} onChange={(e) => upd(i, "unit", e.target.value)} placeholder="unit" />
-              <button className="btn ghost sm" aria-label={`Remove ${t.name || t.address}`} onClick={() => del(i)}>✕</button>
+            <div key={i}>
+              <div className="tag-row">
+                <input type="text" aria-label="Tag name" value={t.name ?? ""} onChange={(e) => upd(i, "name", e.target.value)} placeholder="name" />
+                <input type="text" aria-label="Address" className="mono" value={t.address ?? ""} onChange={(e) => upd(i, "address", e.target.value)} title={t.address} />
+                <input type="text" aria-label="Unit" value={t.unit ?? ""} onChange={(e) => upd(i, "unit", e.target.value)} placeholder="unit" />
+                <div className="row-acts">
+                  <button className={`btn ghost sm${engineered(t) ? " on" : ""}`} aria-expanded={more.has(i)} onClick={() => toggle(i)}
+                          aria-label={`Unit and range of ${t.name || t.address}`} title="Unit conversion and engineering range">⋯</button>
+                  <button className="btn ghost sm" aria-label={`Remove ${t.name || t.address}`} onClick={() => del(i)}>✕</button>
+                </div>
+              </div>
+              {more.has(i) && (
+                <div className="tag-more">
+                  <label className="narrow-only"><span>Unit</span>
+                    <input type="text" value={t.unit ?? ""} onChange={(e) => upd(i, "unit", e.target.value)} placeholder="e.g. degC" /></label>
+                  <label><span>Device unit</span>
+                    <input type="text" value={t.sourceUnit ?? ""} onChange={(e) => upd(i, "sourceUnit", e.target.value)} placeholder="same as unit" /></label>
+                  <label><span>Range low</span>
+                    <input type="number" step="any" value={t.engLow ?? ""} onChange={(e) => upd(i, "engLow", e.target.value)} placeholder="none" /></label>
+                  <label><span>Range high</span>
+                    <input type="number" step="any" value={t.engHigh ?? ""} onChange={(e) => upd(i, "engHigh", e.target.value)} placeholder="none" /></label>
+                  <p className="hint">Device unit: the unit the device reports in (e.g. degF); values are converted to the tag's unit.
+                    Outside the range, readings are sent with quality UNCERTAIN.</p>
+                </div>
+              )}
             </div>
           ))}
         </div>

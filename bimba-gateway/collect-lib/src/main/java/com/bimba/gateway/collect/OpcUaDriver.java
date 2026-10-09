@@ -19,6 +19,7 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.DataValue;
 import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.builtin.NodeId;
+import org.eclipse.milo.opcua.stack.core.types.builtin.StatusCode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseDirection;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseResultMask;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
@@ -34,6 +35,7 @@ import org.eclipse.milo.opcua.stack.core.util.EndpointUtil;
 import java.net.URI;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -114,7 +116,7 @@ public final class OpcUaDriver implements Driver {
         }
         List<DataValue> values;
         try {
-            values = client.readValues(0.0, TimestampsToReturn.Neither, ids).get(timeoutMs, TimeUnit.MILLISECONDS);
+            values = client.readValues(0.0, TimestampsToReturn.Source, ids).get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             close();
             throw new Exception("read from " + endpoint + " failed: " + rootMessage(e), e);
@@ -126,14 +128,24 @@ public final class OpcUaDriver implements Driver {
                 continue;
             }
             DataValue dv = values.get(i);
-            if (dv.getStatusCode() != null && !dv.getStatusCode().isGood()) {
-                out.add(Reading.bad("OPC UA status " + dv.getStatusCode()));
+            StatusCode sc = dv.getStatusCode();
+            if (sc != null && sc.isBad()) {
+                out.add(Reading.bad("OPC UA status " + sc));
                 continue;
             }
             Object v = dv.getValue().getValue();
-            out.add(v instanceof Number n ? Reading.ok(tags.get(i).scale(n.doubleValue())) : Reading.ok(plain(v)));
+            Object value = v instanceof Number n ? tags.get(i).scale(n.doubleValue()) : plain(v);
+            Instant at = sourceTime(dv);
+            // Uncertain_*: the server has a value but doubts it (e.g. last usable value, sensor not accurate)
+            out.add(sc != null && sc.isUncertain() ? Reading.uncertain(value, "OPC UA status " + sc, at) : Reading.ok(value, at));
         }
         return out;
+    }
+
+    /** the value's source timestamp, null when the server sends none */
+    private static Instant sourceTime(DataValue dv) {
+        DateTime t = dv.getSourceTime();
+        return t == null || t.getUtcTime() <= 0 ? null : t.getJavaInstant();
     }
 
     /** Boolean, String, Number or null stay; everything else becomes text */

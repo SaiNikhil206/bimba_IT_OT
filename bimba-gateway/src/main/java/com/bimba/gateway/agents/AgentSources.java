@@ -3,6 +3,8 @@ package com.bimba.gateway.agents;
 import com.bimba.gateway.Db;
 import com.bimba.gateway.GatewayService;
 import com.bimba.gateway.Json;
+import com.bimba.gateway.canonical.Ingest;
+import com.bimba.gateway.collect.Units;
 import com.bimba.gateway.config.SecretBox;
 import com.bimba.gateway.delivery.DeliveryEngine;
 import com.bimba.gateway.security.OrgService;
@@ -55,6 +57,7 @@ public class AgentSources {
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9 ._-]{0,119}");
     private static final int MAX_TAGS = 5000;
     private static final int MAX_BATCH = 5000;
+    private static final int MAX_BODY = 256 * 1024;           // as every other gateway request (web/ApiErrors)
     private static final long COMMAND_TTL_MS = 60_000;
     private static final long WAIT_MS = 25_000;
     private static final String MASK = "********";
@@ -64,6 +67,7 @@ public class AgentSources {
     private final AgentRegistry registry;
     private final OrgService orgs;
     private final SecretBox secrets;
+    private final Ingest ingest;
 
     /** agent -> (machine/tag -> last message), for the console's Live tab */
     private final Map<UUID, Map<String, JsonObject>> live = new ConcurrentHashMap<>();
@@ -75,7 +79,8 @@ public class AgentSources {
     /** agent -> readings accepted / rejected since start */
     private final Map<UUID, long[]> counters = new ConcurrentHashMap<>();
 
-    public AgentSources(Db db, GatewayService gateway, AgentRegistry registry, OrgService orgs, SecretBox secrets) {
+    public AgentSources(Db db, GatewayService gateway, AgentRegistry registry, OrgService orgs, SecretBox secrets, Ingest ingest) {
+        this.ingest = ingest;
         this.db = db;
         this.gateway = gateway;
         this.registry = registry;
@@ -206,14 +211,29 @@ public class AgentSources {
     }
 
     /**
-     * POST /system/bimba-agent-readings body {messages:[canonical messages]}: each message must report one of the
-     * agent's own machines (its sources' names); accepted ones go to the delivery engine. 503 while the gateway's
-     * delivery engine is restarting, so the agent keeps the batch and sends it again.
+     * POST /system/bimba-agent-readings body {messages:[canonical messages]} or {records:[..]}: each message (1.x or 2.x)
+     * must match its schema version
+     * and report one of the agent's own machines (its sources' names); accepted ones go to the delivery engine, the
+     * others to the quarantine with their raw text and reason (canonical/Ingest). A body that is not JSON is
+     * quarantined as it came (400). 503 while the gateway's delivery engine is restarting, so the agent keeps the batch
+     * and sends it again.
      */
-    public Map<String, Object> readings(AgentRegistry.Caller caller, JsonObject body, String remoteIp) throws AgentRegistry.ApiError {
+    public Map<String, Object> readings(AgentRegistry.Caller caller, String body, String remoteIp) throws AgentRegistry.ApiError {
         AgentRegistry.Agent a = registry.authenticate(caller);
-        JsonArray messages = body.has("messages") && body.get("messages").isJsonArray() ? body.getAsJsonArray("messages") : null;
+        if (body != null && body.length() > MAX_BODY) {
+            throw new AgentRegistry.ApiError(413, "at most " + MAX_BODY / 1024 + " KB per request");
+        }
+        JsonObject parsed;
+        try {
+            parsed = Json.GSON.fromJson(body == null || body.isBlank() ? "{}" : body, JsonObject.class);
+        } catch (RuntimeException e) {
+            parsed = null;
+        }
+        JsonArray messages = Ingest.batch(parsed);           // {messages:[..]} (1.x) or {records:[..]} (2.x batch form)
         if (messages == null) {
+            if (body != null && !body.isBlank()) {
+                ingest.malformedFromAgent(a.id(), a.orgId(), body, parsed == null ? "the request body is not JSON" : "messages[] / records[] is missing");
+            }
             throw new AgentRegistry.ApiError(400, "messages[] is required");
         }
         if (messages.size() > MAX_BATCH) {
@@ -223,35 +243,17 @@ public class AgentSources {
         if (delivery == null) {
             throw new AgentRegistry.ApiError(503, "the gateway's delivery is restarting; send again shortly");
         }
-        Set<String> mine = machinesOf.computeIfAbsent(a.id(), this::loadMachines);
+        Ingest.AgentResult r = ingest.fromAgent(a.id(), a.orgId(), messages, machinesOf(a.id()), delivery::offer);
         Map<String, JsonObject> last = live.computeIfAbsent(a.id(), k -> new ConcurrentHashMap<>());
-        int accepted = 0;
-        int rejected = 0;
-        List<String> unknown = new ArrayList<>();
-        for (JsonElement e : messages) {
-            if (!e.isJsonObject()) {
-                rejected++;
-                continue;
+        for (JsonObject m : r.accepted()) {
+            String key = Json.str(m, "machineId") + "/" + Json.str(m, "tagName");
+            if (last.size() < MAX_TAGS || last.containsKey(key)) {
+                last.put(key, m);
             }
-            JsonObject m = e.getAsJsonObject();
-            String machine = Json.str(m, "machineId");
-            String tag = Json.str(m, "tagName");
-            if (machine == null || tag == null || !mine.contains(machine)) {
-                rejected++;
-                if (machine != null && unknown.size() < 5 && !unknown.contains(machine)) {
-                    unknown.add(machine);
-                }
-                continue;
-            }
-            JsonObject src = m.has("source") && m.get("source").isJsonObject() ? m.getAsJsonObject("source") : new JsonObject();
-            src.addProperty("agentId", a.id().toString());
-            m.add("source", src);
-            delivery.offer(m);
-            if (last.size() < MAX_TAGS || last.containsKey(machine + "/" + tag)) {
-                last.put(machine + "/" + tag, m);
-            }
-            accepted++;
         }
+        int accepted = r.accepted().size();
+        int rejected = r.rejected();
+        List<String> unknown = r.unknownMachines();
         long[] c = counters.computeIfAbsent(a.id(), k -> new long[2]);
         synchronized (c) {
             c[0] += accepted;
@@ -263,10 +265,18 @@ public class AgentSources {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("accepted", accepted);
         out.put("rejected", rejected);
+        if (rejected > 0) {
+            out.put("quarantined", rejected);
+        }
         if (!unknown.isEmpty()) {
             out.put("unknownMachines", unknown);
         }
         return out;
+    }
+
+    /** the machine names an agent may report (its sources' machines), for readings and quarantine replays */
+    public Set<String> machinesOf(UUID agentId) {
+        return machinesOf.computeIfAbsent(agentId, this::loadMachines);
     }
 
     // ================================================================== console
@@ -1018,7 +1028,7 @@ public class AgentSources {
         }
     }
 
-    private static JsonArray tags(JsonObject b, String kind) throws ApiException {
+    static JsonArray tags(JsonObject b, String kind) throws ApiException {
         JsonArray in = b.has("tags") && b.get("tags").isJsonArray() ? b.getAsJsonArray("tags") : new JsonArray();
         if (in.size() > MAX_TAGS) {
             throw new ApiException(400, "tags", "At most " + MAX_TAGS + " tags per data source.");
@@ -1054,24 +1064,52 @@ public class AgentSources {
                 throw new ApiException(400, "tags", "Tag names must be unique" + (machine == null || machine.isBlank() ? "" : " per machine")
                         + " (\"" + clean.get("name").getAsString() + "\").");
             }
-            for (String k : List.of("unit", "dataType")) {
+            for (String k : List.of("unit", "dataType", "sourceUnit")) {
                 String v = Json.str(t, k);
                 if (v != null && !v.isBlank()) {
                     clean.addProperty(k, v.trim().length() > 40 ? v.trim().substring(0, 40) : v.trim());
                 }
             }
-            for (String k : List.of("rawLow", "rawHigh", "scaledLow", "scaledHigh")) {
+            for (String k : List.of("rawLow", "rawHigh", "scaledLow", "scaledHigh", "engLow", "engHigh")) {
                 if (t.has(k) && t.get(k).isJsonPrimitive() && !t.get(k).getAsString().isBlank()) {
                     try {
-                        clean.addProperty(k, Double.parseDouble(t.get(k).getAsString()));
+                        double v = Double.parseDouble(t.get(k).getAsString());
+                        if (Double.isNaN(v) || Double.isInfinite(v)) {
+                            throw new NumberFormatException(k);
+                        }
+                        clean.addProperty(k, v);
                     } catch (NumberFormatException ex) {
-                        throw new ApiException(400, "tags", "Scaling of \"" + clean.get("name").getAsString() + "\" must be numbers.");
+                        throw new ApiException(400, "tags", (k.startsWith("eng") ? "The engineering range" : "Scaling") + " of \""
+                                + clean.get("name").getAsString() + "\" must be numbers.");
                     }
                 }
+            }
+            String why = engineering(clean);
+            if (why != null) {
+                throw new ApiException(400, "tags", "Tag \"" + clean.get("name").getAsString() + "\": " + why + ".");
             }
             out.add(clean);
         }
         return out;
+    }
+
+    /** why a tag's unit conversion / engineering range cannot work, null when it can */
+    private static String engineering(JsonObject t) {
+        String from = Json.str(t, "sourceUnit");          // "" when not set
+        String to = Json.str(t, "unit");
+        if (!from.isEmpty() && !from.equals(to)) {
+            if (to.isEmpty()) {
+                return "the device unit " + from + " needs a unit to convert to";
+            }
+            String p = Units.problem(from, to);
+            if (p != null) {
+                return p;
+            }
+        }
+        if (t.has("engLow") && t.has("engHigh") && t.get("engLow").getAsDouble() > t.get("engHigh").getAsDouble()) {
+            return "the engineering range's low end is above its high end";
+        }
+        return null;
     }
 
     private static String text(JsonObject b, String k, int max) {

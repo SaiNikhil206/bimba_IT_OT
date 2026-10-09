@@ -138,6 +138,11 @@ public class BimbaConfig {
         public int maxRetryAfterSeconds = 300;
         /** split batches into requests of at most this many readings (0 = as they come) */
         public int maxBatchMessages = 0;
+        /**
+         * Message format this destination receives: "1" = BIMBA 1.x (camelCase, what destinations made before 2.0 get),
+         * "2" = the BRD canonical envelope 2.0 (snake_case, canonical/CanonicalV2). The BIMBA database always takes 1.x.
+         */
+        public String schemaVersion = "1";
 
         // TLS (HTTPS, MQTT ssl/wss, Kafka SSL): PEM texts; tlsKey is a secret
         /** extra trusted certificate authorities (self-signed or company PKI), added to the built-in ones */

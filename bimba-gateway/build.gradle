@@ -27,6 +27,7 @@ dependencies {
     // field drivers + collector (Modbus TCP, OPC UA, gson), shared with the site agent's edge collector
     implementation project(':collect-lib')
     implementation 'org.bouncycastle:bcpkix-jdk18on:1.78.1'                    // site agent certificates (CSR, issuing)
+    implementation 'com.networknt:json-schema-validator:1.5.6'                // canonical messages vs. schemas/telemetry-v1 (FR-RTE-01)
 
     // delivery
     implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'

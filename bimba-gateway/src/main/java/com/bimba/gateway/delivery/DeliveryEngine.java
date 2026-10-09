@@ -378,7 +378,7 @@ public class DeliveryEngine {
 
     private byte[] envelope(List<JsonObject> messages) {
         JsonObject env = new JsonObject();
-        env.addProperty("schemaVersion", "1.0");
+        env.addProperty("schemaVersion", com.bimba.gateway.collect.Canonical.VERSION);
         env.addProperty("batchId", UUID.randomUUID().toString());
         env.addProperty("plantId", cfg.plantId);
         env.addProperty("edgeId", cfg.edgeId);
