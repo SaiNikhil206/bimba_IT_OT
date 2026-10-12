@@ -4,7 +4,7 @@ How to run, operate, change and troubleshoot the POC day to day. For the backgro
 part, see the other files in `docs/`.
 
 ```
-BIMBA Gateway ──► Boomi Event Streams (primary) ──► Boomi ES listener ──┐
+BIMBA Setu ──► Boomi Event Streams (primary) ──► Boomi ES listener ──┐
               └─► BIMBA Ingest /api/ingest/ (failover) ──────────────────┼─► Shared PostgreSQL DB (schema bimba) ─► BIMBA (REST + WS) ─► BIMBA live UI :3080
               └─► Kafka (mirror copy, independent)                        │
 ```
@@ -25,7 +25,7 @@ Prerequisite: Docker Desktop running. Run all commands from the project root in 
    | `BOOMI_ES_CONSUME_URL` / `BOOMI_ES_CONSUME_TOKEN` | Only needed by the Django consumer (`django-es-consumer`) |
    | `BOOMI_INSTALL_TOKEN`, `BOOMI_ATOMNAME`, `BOOMI_ENVIRONMENTID` | Only needed for a local Docker Atom (`--profile boomi`) |
 
-2. **Start the stack** (the gateway builds in a JDK container, so no local Java is needed):
+2. **Start the stack** (Setu builds in a JDK container, so no local Java is needed):
    ```bash
    docker compose --profile kafka up -d --build
    ```
@@ -44,8 +44,8 @@ come from `ignition/bimba/console-sources.json`; no manual setup step.
 | URL | Use it for |
 |---|---|
 | http://localhost:3080 | **Live UI**: machines, tag values, trends, which end system stored each batch, plugin health |
-| http://localhost:8090 | BIMBA Gateway console (`admin` / `admin`) |
-| http://localhost:8090/system/bimba-status | Gateway status JSON: routes, active destination, last errors, buffer size |
+| http://localhost:8090 | BIMBA Setu console (`admin` / `admin`) |
+| http://localhost:8090/system/bimba-status | Setu status JSON: routes, active destination, last errors, buffer size |
 | http://localhost:8000/admin | Django admin (`admin` / `admin`): browse the stored tables |
 | http://localhost:8085 | Kafka UI: topic `bimba.PLANT01.telemetry` |
 
@@ -56,9 +56,9 @@ docker compose --profile kafka up -d
 ```bash
 docker compose --profile kafka stop
 ```
-Logs for one service (`gateway`, `django`, `ui`, `kafka` …):
+Logs for one service (`setu`, `django`, `ui`, `kafka` …):
 ```bash
-docker compose logs -f --tail 100 gateway
+docker compose logs -f --tail 100 setu
 ```
 
 ### Reading the BIMBA live UI
@@ -79,9 +79,9 @@ Event Streams error (for example 401, which means a bad token).
 
 ### Change the Event Streams token
 1. Edit `BOOMI_ES_PRODUCE_TOKEN` in `.env`.
-2. Recreate the gateway so it picks up the new value:
+2. Recreate Setu so it picks up the new value:
    ```bash
-   docker compose --profile kafka up -d gateway
+   docker compose --profile kafka up -d setu
    ```
 3. Within about 15 s, `boomi-eventstreams` should show **Up**, and new batches arrive as `boomi-es`.
 
@@ -104,7 +104,7 @@ Only one `primary` and one `failover` should be enabled at a time. You can enabl
 
 ### Add machines or tags
 Add them in BIMBA Operations → Settings (saved to `ignition/bimba/demo-tags.json`, Ignition
-tag-export layout under `[default]BIMBA/<machineId>/<tagName>`). The gateway picks up the change
+tag-export layout under `[default]BIMBA/<machineId>/<tagName>`). Setu picks up the change
 and the new machine appears in the UI automatically. Values are sent on change.
 
 ### Send a copy to Kafka or another IT system
@@ -121,7 +121,7 @@ Then, in `config.json`, disable `bimba-ingest` and enable `bimba-ingest-mqtt`.
 ### Rebuild after code changes
 | Changed | Command |
 |---|---|
-| BIMBA Gateway (`bimba-gateway/`) | `docker compose up -d --build gateway` |
+| BIMBA Setu (`bimba-setu/`) | `docker compose up -d --build setu` |
 | BIMBA Ingest + REST/WS (`django-backend/`) | `docker compose up -d --build django` |
 | BIMBA live UI (`react-ui/`) | `docker compose up -d --build ui` |
 
@@ -171,8 +171,8 @@ Stop it afterwards, as in §1 step 4. Both consumers store rows as `via = 'boomi
 | `docker compose up` fails with "set BIMBA_DB_HOST" | Fill `BIMBA_DB_*` in `.env` (`.\scripts\set-database.ps1`) |
 | Batches arrive as `bimba-rest`, not `boomi-es` | Plugin panel or `/system/bimba-status`: a **401** means a bad or expired token (§3). Timeouts point to network or proxy problems. |
 | `boomi-es` batches stop, plugin says ES is Up | The Boomi listener isn't running (check Process Reporting in Boomi), or `django-es-consumer` is competing for the subscription |
-| UI shows "Unreachable" for the gateway | `docker compose ps gateway`, then `docker compose logs gateway`. |
-| Gateway buffer keeps growing | All destinations on the route are down. Data is safe on disk (volume `gateway-data`) and replays in order after recovery. |
+| UI shows "Unreachable" for Setu | `docker compose ps setu`, then `docker compose logs setu`. |
+| Setu buffer keeps growing | All destinations on the route are down. Data is safe on disk (volume `setu-data`) and replays in order after recovery. |
 | `SUBSTN-M1` tags are BAD | The OPC UA device `METER` is missing from `console-sources.json`, or `opcua-sim` isn't running |
 | `PUMP-P1` / `TANK-T1` are BAD | The Modbus device `PLC` is missing, or `plc-sim` isn't running |
 | UI not loading on :3080 | Port 3000 is used by another app, so the UI is deliberately on **3080**. Check `docker compose ps ui`. |

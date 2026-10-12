@@ -78,7 +78,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # ---- BIMBA
 INGEST_API_KEY = env("INGEST_API_KEY", "dev-ingest-key")
-PLUGIN_STATUS_URL = env("PLUGIN_STATUS_URL", "http://gateway:8090/system/bimba-status")
+PLUGIN_STATUS_URL = env("PLUGIN_STATUS_URL", "http://setu:8090/system/bimba-status")
 MQTT_HOST = env("MQTT_HOST", "mqtt")
 MQTT_PORT = int(env("MQTT_PORT", "1883"))
 MQTT_TOPIC = env("MQTT_TOPIC", "bimba/v1/+/django")

@@ -9,14 +9,14 @@ are all in schema `public`, including that app's own `django_migrations`.
 | Schema | Used by | Holds |
 |---|---|---|
 | `bimba` (`BIMBA_DB_SCHEMA`) | Django (BIMBA Operations, BIMBA Ingest), Boomi listener | readings (`bimba_machine`, `bimba_tag`, `bimba_measurement`, `bimba_ingest_batch`), Operations accounts and organizations |
-| `bimba_ignition` (`BIMBA_GATEWAY_DB_SCHEMA`) | BIMBA Gateway (the Ignition-replacement server; also the legacy Ignition module) | gateway accounts, organizations, roles, sessions, audit log, destinations, pipelines, machine owners, site agents |
+| `bimba_ignition` (`BIMBA_SETU_DB_SCHEMA`) | BIMBA Setu (the Ignition-replacement server; also the legacy Ignition module) | Setu accounts, organizations, roles, sessions, audit log, destinations, pipelines, machine owners, site agents |
 
 Both schemas have the same tables (the same Django migrations). Django migrates `bimba` and then, with
-`migrate_gateway_schema` at every start, `bimba_ignition`; the gateway (Java) only uses `bimba_ignition` and writes
-every name schema-qualified. On 2026-10-08 the gateway's configuration was copied from `bimba` into `bimba_ignition`
-(not the readings). The copies of the gateway tables left in `bimba` are no longer used. Accounts are now separate:
-a password changed in the gateway console does not change the Operations / Django admin account, and site agents
-enrolled through the gateway are recorded in `bimba_ignition` only.
+`migrate_gateway_schema` at every start, `bimba_ignition`; Setu (Java) only uses `bimba_ignition` and writes
+every name schema-qualified. On 2026-10-08 Setu's configuration was copied from `bimba` into `bimba_ignition`
+(not the readings). The copies of Setu tables left in `bimba` are no longer used. Accounts are now separate:
+a password changed in the Setu console does not change the Operations / Django admin account, and site agents
+enrolled through Setu are recorded in `bimba_ignition` only.
 
 | Schema `bimba` | Created by |
 |---|---|
@@ -53,7 +53,7 @@ The Boomi connection **BIMBA PostgreSQL Connection** stores the same credentials
 - **Port 6433 is a transaction-mode pooler.** Each transaction may run on another server connection, and session
   settings (`SET`, `LISTEN`) stay on the server connection, where the next client of the same login inherits them.
   So nothing in BIMBA may depend on a session setting: Django pins the schema per statement (`bimba/pgbackend`,
-  server-side cursors off), the gateway and Boomi write schema-qualified names, `LISTEN/NOTIFY` falls back to polling.
+  server-side cursors off), Setu and Boomi write schema-qualified names, `LISTEN/NOTIFY` falls back to polling.
 - A client that drops in the middle of a transaction can leave it "idle in transaction" on the pooler, holding its
   locks (seen 2026-10-08 during a migration). End it with `pg_terminate_backend(pid)` (own login only) after checking
   `pg_stat_activity`.

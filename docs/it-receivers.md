@@ -6,7 +6,7 @@ receivers. Give a destination `"role": "mirror"`:
 
 ```
                               ┌─ route "main":  boomi-eventstreams ──(down)──► bimba-ingest (primary → failover)
-BIMBA Gateway ─► batcher ─────┼─ route "kafka": kafka                                     (mirror)
+BIMBA Setu ─► batcher ─────┼─ route "kafka": kafka                                     (mirror)
                               └─ route "it-webhook": REST endpoint                         (mirror)
 ```
 

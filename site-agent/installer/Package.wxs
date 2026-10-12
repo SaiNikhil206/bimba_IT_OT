@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   BIMBA Site Agent MSI.
-    msiexec /i BIMBA-Site-Agent.msi /qn SERVER=https://gateway.example.com:8443 TOKEN=<enrollment token>
-            [SITE="Plant 2"] [NAME=<display name>] [TRUSTCERT=<sha256 of a self-signed gateway certificate>]
+    msiexec /i BIMBA-Site-Agent.msi /qn SERVER=https://setu.example.com:8443 TOKEN=<enrollment token>
+            [SITE="Plant 2"] [NAME=<display name>] [TRUSTCERT=<sha256 of a self-signed Setu certificate>]
   Windows Installer owns the program file, the service and the Apps entry. Our exe only does what MSI cannot:
     enroll            after the files are copied, before the service starts: registers the machine (token used once,
                       never stored) and writes the locked-down configuration in ProgramData
-    uninstall-notify  before the service stops: the service tells the gateway and deletes its certificate and key
+    uninstall-notify  before the service stops: the service tells Setu and deletes its certificate and key
     remove-data       after the service stopped: deletes the configuration and logs
   Upgrades (same UpgradeCode, higher version) keep the configuration, so they need no TOKEN.
   TOKEN is a hidden property and the enroll command line is hidden, so the token does not appear in MSI logs.
@@ -46,7 +46,7 @@
     <Launch Condition="Installed OR NOT EXEINSTALL"
             Message="The BIMBA Site Agent was installed with BIMBA-Site-Agent-Setup.exe on this computer. Remove it first (Settings &gt; Apps &gt; BIMBA Site Agent), then install the MSI." />
     <Launch Condition="Installed OR AGENTCONFIG OR (SERVER AND TOKEN)"
-            Message="Give the gateway address and an enrollment token, for example: msiexec /i BIMBA-Site-Agent.msi SERVER=https://gateway.example.com:8443 TOKEN=&lt;token&gt;. For the setup wizard run BIMBA-Site-Agent-Setup.exe instead." />
+            Message="Give the Setu address and an enrollment token, for example: msiexec /i BIMBA-Site-Agent.msi SERVER=https://setu.example.com:8443 TOKEN=&lt;token&gt;. For the setup wizard run BIMBA-Site-Agent-Setup.exe instead." />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="BIMBA Site Agent">

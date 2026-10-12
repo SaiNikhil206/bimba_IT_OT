@@ -1,0 +1,46 @@
+[Unit]
+Description=BIMBA Site Agent (sends this computer's SCADA data to the BIMBA Setu)
+After=network-online.target
+Wants=network-online.target
+# not registered yet: stay stopped (sudo bimba-site-agent install --server ... --token ...)
+ConditionPathExists=/etc/bimba-site-agent/agent.json
+ConditionPathExists=!/var/lib/bimba-site-agent/uninstall-notified
+
+[Service]
+Type=simple
+User=bimba-agent
+Group=bimba-agent
+EnvironmentFile=-/etc/default/bimba-site-agent
+ExecStart=/opt/bimba-site-agent/bin/bimba-site-agent run
+Restart=on-failure
+RestartSec=10
+# 78 = the organization removed this computer: do not restart
+RestartPreventExitStatus=78
+SuccessExitStatus=143
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=bimba-site-agent
+StateDirectoryMode=0700
+
+# hardening: the agent only needs the network, its own config and its data folder
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/bimba-site-agent
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

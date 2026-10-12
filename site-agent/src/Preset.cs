@@ -6,8 +6,8 @@ using System.Text;
 namespace Bimba.SiteAgent
 {
     /// <summary>
-    /// Settings the BIMBA Gateway stamps onto the end of the .exe when it is downloaded from the console
-    /// ("Download installer"): the gateway address and the SHA-256 of its self-signed HTTPS certificate, so the
+    /// Settings the BIMBA Setu stamps onto the end of the .exe when it is downloaded from the console
+    /// ("Download installer"): Setu address and the SHA-256 of its self-signed HTTPS certificate, so the
     /// person installing only enters an enrollment token or their e-mail address and password. Never a secret.
     /// Layout: ...exe bytes... "\r\n&lt;&lt;BIMBA-PRESET:" base64(JSON) "&gt;&gt;\r\n"
     /// </summary>
@@ -61,7 +61,7 @@ namespace Bimba.SiteAgent
             }
         }
 
-        /// <summary>The preset certificate pin, only for the preset gateway address.</summary>
+        /// <summary>The preset certificate pin, only for the preset Setu address.</summary>
         public static string PinFor(string server)
         {
             var p = Current;

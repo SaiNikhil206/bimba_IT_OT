@@ -9,15 +9,16 @@
     <AssemblyName>BIMBA-Site-Agent-Setup</AssemblyName>
     <RootNamespace>Bimba.SiteAgent</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.5.0</Version>
+    <Version>1.7.1</Version>
     <Product>BIMBA Site Agent</Product>
     <Company>BIMBA</Company>
-    <Description>Registers this machine with its organization on the BIMBA Gateway and sends its SCADA data</Description>
+    <Description>Registers this machine with its organization on the BIMBA Setu and sends its SCADA data</Description>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="opcda\**" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.IO.Compression" />
@@ -29,7 +30,7 @@
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
-  <!-- edge collector (jlink Java runtime + bimba-gateway/edge jars), zipped by scripts/build-site-agent.ps1 -->
+  <!-- edge collector (jlink Java runtime + bimba-setu/edge jars + opcda\bimba-opcda.exe), zipped by scripts/build-site-agent.ps1 -->
   <ItemGroup Condition="Exists('edge\edge.zip')">
     <EmbeddedResource Include="edge\edge.zip" LogicalName="edge.zip" />
   </ItemGroup>

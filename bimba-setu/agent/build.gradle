@@ -1,0 +1,50 @@
+// BIMBA Site Agent for Linux (x86-64 servers and industrial PCs, Raspberry Pi arm64 / armhf, any Java 17+ platform):
+// the same agent as the Windows service (site-agent/), written in Java so one build runs on every CPU. Enrolls with the
+// Setu, keeps a client certificate (mutual TLS), sends heartbeats + inventory and runs the edge collector in-process.
+// `gradle :agent:agentDist` -> agent/build/agent/lib/*.jar; scripts/build-linux-agent.ps1 packages them as
+// bimba-site-agent_all.deb + bimba-site-agent-linux.tar.gz (agent/packaging).
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
+version = '1.7.1'
+
+dependencies {
+    implementation project(':edge')
+    implementation project(':collect-lib')                           // drivers, gson
+    implementation 'org.bouncycastle:bcpkix-jdk18on:1.78.1'          // certificate signing request for the client certificate
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.16'                      // driver logs to stderr (journald)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+jar {
+    archiveFileName = 'bimba-site-agent.jar'
+    // Class-Path: the launcher starts lib/bimba-site-agent.jar alone, so Java never lists lib/ (32-bit JVMs on some
+    // file systems cannot expand lib/*)
+    manifest { attributes 'Implementation-Version': project.version, 'Main-Class': 'com.bimba.agent.AgentMain' }
+    def runtime = configurations.runtimeClasspath
+    doFirst { manifest.attributes('Class-Path': runtime.files.collect { it.name }.join(' ')) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17                                              // Debian 12 / Raspberry Pi OS 12, Ubuntu 22.04, RHEL 8+
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.register('agentDist', Sync) {               // Sync: jars no longer used are removed
+    dependsOn jar
+    into layout.buildDirectory.dir('agent/lib')
+    from jar
+    from configurations.runtimeClasspath
+}

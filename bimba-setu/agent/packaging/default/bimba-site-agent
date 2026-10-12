@@ -1,0 +1,12 @@
+# Settings of the BIMBA Site Agent (read by the systemd service and the bimba-site-agent command).
+# After a change: sudo systemctl restart bimba-site-agent
+
+# Java runtime (default: bundled runtime, JAVA_HOME, java on the PATH, then /usr/lib/jvm)
+#BIMBA_JAVA=/usr/lib/jvm/java-17-openjdk-arm64/bin/java
+
+# Extra Java options. The default heap of 160 MB fits a Raspberry Pi Zero 2 W; raise it for thousands of tags.
+#JAVA_OPTS="-Xmx384m"
+
+# Proxy between this computer and Setu
+#HTTPS_PROXY=http://proxy.example.com:3128
+#NO_PROXY=gateway.plant.local

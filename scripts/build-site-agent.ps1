@@ -1,9 +1,10 @@
 # Builds the BIMBA Site Agent into site-agent/dist:
 #   BIMBA-Site-Agent-Setup.exe   setup wizard + silent installer + Windows service (.NET Framework 4.8, no extra runtime);
-#                                carries the edge collector (Java 17 runtime + OPC UA / Modbus drivers) as edge.zip
+#                                carries the edge collector (Java 17 runtime + OPC UA / Modbus drivers + the 32-bit OPC DA
+#                                bridge site-agent/opcda) as edge.zip
 #   BIMBA-Site-Agent.msi         for Intune / SCCM / Group Policy (WiX Toolset 5, restored from NuGet on first build)
-#   release.json                 version, SHA-256 and signer of both files (shown in the gateway console)
-# The gateway serves this folder for "Download installer" (docker-compose mounts it at /installers).
+#   release.json                 version, SHA-256 and signer of both files (shown in the Setu console)
+# Setu serves this folder for "Download installer" (docker-compose mounts it at /installers).
 #
 # Code signing (Authenticode, SHA-256, RFC 3161 timestamp). Set ONE of:
 #   BIMBA_SIGN_THUMBPRINT                    certificate in Cert:\CurrentUser\My or Cert:\LocalMachine\My
@@ -56,13 +57,13 @@ function Sign-File([string]$path) {
 }
 
 # ------------------------------------------------------------------ edge collector (embedded in the exe as edge.zip)
-# Jars: bimba-gateway/edge (gradle :edge:edgeDist, run in the gateway's Gradle image, so no local Gradle is needed).
+# Jars: bimba-setu/edge (gradle :edge:edgeDist, run in Setu's Gradle image, so no local Gradle is needed).
 # Runtime: jlink of a Windows JDK 17+ (BIMBA_JDK, else JAVA_HOME, else a Gradle-provisioned Temurin 17), trimmed to the
 # modules the edge needs (about 45 MB unpacked).
 $edgeOut = Join-Path $agent "edge"
 $edgeZip = Join-Path $edgeOut "edge.zip"
 if (-not $SkipEdge) {
-    $gw = Join-Path $root "bimba-gateway"
+    $gw = Join-Path $root "bimba-setu"
     Write-Host "edge collector: building jars"
     docker run --rm -v "${gw}:/src" -v bimba-gradle-cache:/home/gradle/.gradle -w /src gradle:9.2-jdk21 gradle :edge:edgeDist --no-daemon -q
     if ($LASTEXITCODE -ne 0) { throw "edge collector build failed" }
@@ -78,6 +79,12 @@ if (-not $SkipEdge) {
         --output (Join-Path $stage "runtime")
     if ($LASTEXITCODE -ne 0) { throw "jlink failed" }
     Copy-Item (Join-Path $gw "edge\build\edge\lib") (Join-Path $stage "lib") -Recurse
+    Write-Host "edge collector: OPC DA bridge (x86)"
+    dotnet build (Join-Path $agent "opcda\BimbaOpcDa.csproj") -c Release -nologo -v quiet -o (Join-Path $agent "bin\opcda")
+    if ($LASTEXITCODE -ne 0) { throw "OPC DA bridge build failed" }
+    New-Item -ItemType Directory -Force (Join-Path $stage "opcda") | Out-Null
+    Copy-Item (Join-Path $agent "bin\opcda\bimba-opcda.exe"), (Join-Path $agent "bin\opcda\bimba-opcda.exe.config") (Join-Path $stage "opcda")
+    Sign-File (Join-Path $stage "opcda\bimba-opcda.exe")
     [IO.File]::WriteAllText((Join-Path $stage "version.txt"), $version, (New-Object Text.UTF8Encoding $false))
     if (Test-Path $edgeZip) { Remove-Item $edgeZip -Force }
     Add-Type -AssemblyName System.IO.Compression.FileSystem

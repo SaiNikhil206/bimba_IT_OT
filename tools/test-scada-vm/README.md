@@ -1,7 +1,7 @@
 # Test SCADA machine (Windows Server VM in Docker)
 
 A **test-only** Windows Server 2022 machine that runs as a Docker container (`dockurr/windows`, QEMU/KVM), next to
-the gateway. Use it to try the BIMBA Site Agent installer without touching the laptop's Windows.
+Setu. Use it to try the BIMBA Site Agent installer without touching the laptop's Windows.
 
 ## Start
 
@@ -19,10 +19,10 @@ Sign-in is user `bimba`, with the password from `BIMBA_TESTVM_PASSWORD` in `.env
 ## Install the agent
 
 1. In the VM, open **Shared** on the desktop (drive `Z:`) → `BIMBA-Site-Agent-Setup.exe`.
-2. Gateway: `https://172.30.0.254:8443` (dockur forwards 172.30.0.254 to the Docker host, which publishes 8443). `gateway` and the laptop's LAN IP do not work from inside the VM.
-3. Trust the gateway certificate (SHA-256 `4F:5E:D4:88…46:33`), then sign in with an EasyStepIn e-mail + password or
+2. Setu: `https://172.30.0.254:8443` (dockur forwards 172.30.0.254 to the Docker host, which publishes 8443). `setu` and the laptop's LAN IP do not work from inside the VM.
+3. Trust Setu certificate (SHA-256 `4F:5E:D4:88…46:33`), then sign in with an EasyStepIn e-mail + password or
    an enrollment token → Install.
-4. Gateway console http://localhost:8090 → organization **EasyStepIn** → **Site agents** → machine `TEST-SCADA`.
+4. Setu console http://localhost:8090 → organization **EasyStepIn** → **Site agents** → machine `TEST-SCADA`.
 
 SCADA software for the agent to detect, e.g. the Ignition trial for Windows: put its installer in
 `tools/test-scada-vm/shared` and run it from `Z:` in the VM. Ignition can read the simulators

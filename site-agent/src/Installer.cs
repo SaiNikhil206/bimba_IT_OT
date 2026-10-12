@@ -63,7 +63,7 @@ namespace Bimba.SiteAgent
             }
         }
 
-        /// <summary>Builds the stored configuration from the gateway's enrollment answer.</summary>
+        /// <summary>Builds the stored configuration from Setu's enrollment answer.</summary>
         public static AgentConfig ConfigFrom(GatewayClient client, IDictionary<string, object> enrolled, string site, string pinnedCert)
         {
             var org = Json.Obj(enrolled, "org");
@@ -141,14 +141,14 @@ namespace Bimba.SiteAgent
         }
 
         /// <summary>
-        /// Tells the gateway the machine is being removed. The service does it (only it can use its certificate and
+        /// Tells Setu the machine is being removed. The service does it (only it can use its certificate and
         /// delete its key); an agent that still has its secret is reported directly if the service cannot.
         /// </summary>
         public static void NotifyUninstall(Action<string> progress)
         {
             var cfg = AgentConfig.TryLoad();
             if (cfg == null) return;
-            progress("Telling the gateway this machine is being removed");
+            progress("Telling Setu this machine is being removed");
             try { File.Delete(Paths.UninstallMarker); } catch { /* not there */ }
             bool done = false;
             if (ServiceStatus() != null)
@@ -168,7 +168,7 @@ namespace Bimba.SiteAgent
                 }
                 catch (Exception e)
                 {
-                    Log.Warn("the service could not notify the gateway: " + e.Message);
+                    Log.Warn("the service could not notify Setu: " + e.Message);
                 }
             }
             if (!done && cfg.SecretProtected != null)
@@ -181,10 +181,10 @@ namespace Bimba.SiteAgent
                 }
                 catch (Exception e)
                 {
-                    Log.Warn("could not notify the gateway: " + e.Message);
+                    Log.Warn("could not notify Setu: " + e.Message);
                 }
             }
-            if (!done) Log.Warn("the gateway was not told about the removal; the machine shows as offline there until it is revoked");
+            if (!done) Log.Warn("Setu was not told about the removal; the machine shows as offline there until it is revoked");
         }
 
         /// <summary>
@@ -239,7 +239,7 @@ namespace Bimba.SiteAgent
             }
         }
 
-        /// <summary>Tells the gateway, removes the service, files, configuration and the Apps entry.</summary>
+        /// <summary>Tells Setu, removes the service, files, configuration and the Apps entry.</summary>
         public static void Uninstall(Action<string> progress, bool quiet = true)
         {
             var msi = MsiProductCode;

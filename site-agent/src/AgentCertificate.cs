@@ -5,9 +5,9 @@ using System.Security.Cryptography.X509Certificates;
 namespace Bimba.SiteAgent
 {
     /// <summary>
-    /// The agent's client certificate for mutual TLS with the gateway. The RSA key is created on this machine in the
+    /// The agent's client certificate for mutual TLS with Setu. The RSA key is created on this machine in the
     /// Windows key store of the account the code runs as (the service: NT AUTHORITY\LocalService), cannot be exported,
-    /// and never leaves the machine; only a certificate signing request goes to the gateway, which signs it with its
+    /// and never leaves the machine; only a certificate signing request goes to Setu, which signs it with its
     /// agent authority. The certificate sits in that account's personal store (CurrentUser\My).
     /// </summary>
     internal static class AgentCertificate
@@ -27,7 +27,7 @@ namespace Bimba.SiteAgent
             return null;
         }
 
-        /// <summary>New non-exportable key + PKCS#10 request (DER). The subject is only a hint; the gateway sets its own.</summary>
+        /// <summary>New non-exportable key + PKCS#10 request (DER). The subject is only a hint; Setu sets its own.</summary>
         public static RSACng NewKey(string agentId, out byte[] csr)
         {
             var p = new CngKeyCreationParameters
@@ -89,7 +89,7 @@ namespace Bimba.SiteAgent
             }
         }
 
-        /// <summary>Removes certificates from the gateway's agent authority other than <paramref name="keep"/> (left over from re-installs).</summary>
+        /// <summary>Removes certificates from Setu's agent authority other than <paramref name="keep"/> (left over from re-installs).</summary>
         public static void DeleteOthers(string keep)
         {
             try
@@ -99,7 +99,7 @@ namespace Bimba.SiteAgent
                 {
                     store.Open(OpenFlags.ReadOnly);
                     foreach (var c in store.Certificates)
-                        if (c.Issuer.Contains("BIMBA Gateway Agent CA") && !string.Equals(c.Thumbprint, keep, StringComparison.OrdinalIgnoreCase))
+                        if ((c.Issuer.Contains("BIMBA Setu Agent CA") || c.Issuer.Contains("BIMBA Gateway Agent CA")) && !string.Equals(c.Thumbprint, keep, StringComparison.OrdinalIgnoreCase))
                             old.Add(c.Thumbprint);
                 }
                 foreach (var t in old) Delete(t);

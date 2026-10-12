@@ -15,7 +15,7 @@ namespace Bimba.SiteAgent
     {
         public int Status { get; }
         public IDictionary<string, object> Body { get; }
-        /// <summary>SHA-256 of the gateway certificate when TLS validation failed (offer "trust this certificate").</summary>
+        /// <summary>SHA-256 of Setu certificate when TLS validation failed (offer "trust this certificate").</summary>
         public string UntrustedCertSha256 { get; }
 
         public GatewayException(int status, string message, IDictionary<string, object> body = null, string untrustedCert = null)
@@ -26,14 +26,14 @@ namespace Bimba.SiteAgent
             UntrustedCertSha256 = untrustedCert;
         }
 
-        /// <summary>The user's organizations when the gateway asks which one to enroll into (HTTP 409).</summary>
+        /// <summary>The user's organizations when Setu asks which one to enroll into (HTTP 409).</summary>
         public List<KeyValuePair<string, string>> Orgs =>
             (Body.TryGetValue("orgs", out var v) ? v as object[] : null)?.OfType<IDictionary<string, object>>()
             .Select(o => new KeyValuePair<string, string>(Json.Str(o, "slug"), Json.Str(o, "name"))).ToList()
             ?? new List<KeyValuePair<string, string>>();
     }
 
-    /// <summary>Talks to the BIMBA Gateway (/system/bimba-agent-*).</summary>
+    /// <summary>Talks to the BIMBA Setu (/system/bimba-agent-*).</summary>
     internal sealed class GatewayClient : IDisposable
     {
         private readonly HttpClient http;
@@ -65,11 +65,11 @@ namespace Bimba.SiteAgent
         public static string Normalize(string server)
         {
             var s = (server ?? "").Trim().TrimEnd('/');
-            if (s.Length == 0) throw new ArgumentException("Enter the gateway address.");
+            if (s.Length == 0) throw new ArgumentException("Enter Setu address.");
             if (!s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !s.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 s = "https://" + s;
             if (!Uri.TryCreate(s, UriKind.Absolute, out var u) || string.IsNullOrEmpty(u.Host))
-                throw new ArgumentException("The gateway address is not a valid URL.");
+                throw new ArgumentException("Setu address is not a valid URL.");
             return u.GetLeftPart(UriPartial.Authority);
         }
 
@@ -149,7 +149,7 @@ namespace Bimba.SiteAgent
             if (agent != null)
             {
                 req.Headers.Add("X-BIMBA-Agent", agent.AgentId);
-                // with a client certificate the secret is not sent (the gateway no longer accepts it)
+                // with a client certificate the secret is not sent (Setu no longer accepts it)
                 string secret = UsesCertificate ? null : agent.Secret;
                 if (secret != null)
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", secret);
@@ -163,13 +163,13 @@ namespace Bimba.SiteAgent
             catch (HttpRequestException) when (lastCertRejected)
             {
                 throw new GatewayException(0, pin != null
-                    ? "The gateway's certificate changed and no longer matches the trusted certificate."
-                    : "The gateway's certificate is not trusted (self-signed or wrong host name).", null, lastCertSha256);
+                    ? "Setu's certificate changed and no longer matches the trusted certificate."
+                    : "Setu's certificate is not trusted (self-signed or wrong host name).", null, lastCertSha256);
             }
             catch (Exception e)
             {
                 var inner = e is HttpRequestException && e.InnerException != null ? e.InnerException : e;
-                throw new GatewayException(0, "Cannot reach the gateway at " + Server + ": " +
+                throw new GatewayException(0, "Cannot reach Setu at " + Server + ": " +
                     (inner is TaskCanceledException ? "timed out" : inner.Message));
             }
             using (resp)
@@ -181,8 +181,8 @@ namespace Bimba.SiteAgent
                 if (code >= 200 && code < 300) return json;
                 string message = Json.Str(json, "error");
                 if (message == null)
-                    message = code == 404 ? "This address is not a BIMBA Gateway (site agent registration not found)."
-                                          : $"The gateway answered HTTP {code}.";
+                    message = code == 404 ? "This address is not a BIMBA Setu (site agent registration not found)."
+                                          : $"Setu answered HTTP {code}.";
                 throw new GatewayException(code, message, json);
             }
         }

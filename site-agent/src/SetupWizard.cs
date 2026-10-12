@@ -8,7 +8,7 @@ using System.Windows.Forms;
 namespace Bimba.SiteAgent
 {
     /// <summary>
-    /// Setup wizard: Welcome -> Gateway -> Sign in (enrollment token or organization user) -> This machine
+    /// Setup wizard: Welcome -> Setu -> Sign in (enrollment token or organization user) -> This machine
     /// (what is shared) -> Install -> Done. Enrollment happens on "Install"; the token / password is used once
     /// and never written to disk.
     /// </summary>
@@ -34,7 +34,7 @@ namespace Bimba.SiteAgent
         private Label serverNote;
         private CheckBox trustCert;
         private string untrustedCert;
-        private string checkedPin;      // certificate pin the gateway check succeeded with (used for the install itself)
+        private string checkedPin;      // certificate pin Setu check succeeded with (used for the install itself)
         private bool gatewayChecked;
 
         // sign in
@@ -129,8 +129,8 @@ namespace Bimba.SiteAgent
                 "It shares basic machine details (name, Windows version, hardware, network addresses and the SCADA software " +
                 "found on this computer). It does not read process data, files or user accounts, and it does not change your SCADA system.\n\n" +
                 (Preset.Current != null
-                    ? "This installer was downloaded from the gateway at " + Preset.Current.Server + ". You need an enrollment token or your organization e-mail address and password."
-                    : "You need the gateway address from your BIMBA administrator, and either an enrollment token or your organization e-mail address and password."));
+                    ? "This installer was downloaded from Setu at " + Preset.Current.Server + ". You need an enrollment token or your organization e-mail address and password."
+                    : "You need Setu address from your BIMBA administrator, and either an enrollment token or your organization e-mail address and password."));
             var existing = AgentConfig.TryLoad();
             if (existing != null || Installer.ServiceStatus() != null)
             {
@@ -150,8 +150,8 @@ namespace Bimba.SiteAgent
         private Panel GatewayPage()
         {
             var p = new Panel();
-            Para(p, 0, 600, "Enter the address of your BIMBA Gateway. Use its HTTPS address, for example\nhttps://gateway.example.com:8443");
-            Caption(p, 62, "Gateway address");
+            Para(p, 0, 600, "Enter the address of your BIMBA Setu. Use its HTTPS address, for example\nhttps://setu.example.com:8443");
+            Caption(p, 62, "Setu address");
             server = new TextBox();
             server.SetBounds(0, 84, 600, 26);
             server.TextChanged += (s, e) => { gatewayChecked = false; untrustedCert = null; trustCert.Visible = false; trustCert.Checked = false; Note(serverNote, "", Muted); };
@@ -165,7 +165,7 @@ namespace Bimba.SiteAgent
             if (Preset.Current != null)
             {
                 server.Text = Preset.Current.Server;
-                Note(serverNote, "Filled in by the gateway this installer was downloaded from" +
+                Note(serverNote, "Filled in by Setu this installer was downloaded from" +
                     (Preset.Current.TrustCert != null ? " (its certificate is trusted automatically)." : "."), Muted);
             }
             else if (prev != null) server.Text = prev.Server;
@@ -257,7 +257,7 @@ namespace Bimba.SiteAgent
 
         // ------------------------------------------------------------------ navigation
 
-        private static readonly string[] Titles = { "Welcome", "Gateway", "Sign in", "This machine", "Installing", "Done" };
+        private static readonly string[] Titles = { "Welcome", "Setu", "Sign in", "This machine", "Installing", "Done" };
         private static readonly string[] Subtitles =
         {
             "BIMBA Site Agent " + Inventory.Version,
@@ -321,11 +321,11 @@ namespace Bimba.SiteAgent
                 checkedPin = pin;
                 gatewayChecked = true;
                 Note(serverNote, GatewayClient.IsPlainHttpToRemote(url)
-                    ? "Connected. Warning: this is plain HTTP, so the token or password travels unencrypted. Prefer the gateway's HTTPS address (port 8443)."
-                    : "Connected to the gateway.", GatewayClient.IsPlainHttpToRemote(url) ? Warn : Good);
+                    ? "Connected. Warning: this is plain HTTP, so the token or password travels unencrypted. Prefer Setu's HTTPS address (port 8443)."
+                    : "Connected to Setu.", GatewayClient.IsPlainHttpToRemote(url) ? Warn : Good);
                 if (GatewayClient.IsPlainHttpToRemote(url))
                 {
-                    var ok = MessageBox.Show(this, "The gateway address uses plain HTTP. Your enrollment token or password will be sent unencrypted.\n\nContinue anyway?",
+                    var ok = MessageBox.Show(this, "Setu address uses plain HTTP. Your enrollment token or password will be sent unencrypted.\n\nContinue anyway?",
                         Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
                     if (!ok) gatewayChecked = false;
                     return ok;
@@ -336,7 +336,7 @@ namespace Bimba.SiteAgent
             {
                 untrustedCert = e.UntrustedCertSha256;
                 Note(serverNote, e.Message + " Only trust it if your administrator confirms this fingerprint.", Bad);
-                trustCert.Text = "Trust this gateway certificate. SHA-256 fingerprint:\n" + Fingerprint(untrustedCert);
+                trustCert.Text = "Trust this Setu server certificate. SHA-256 fingerprint:\n" + Fingerprint(untrustedCert);
                 trustCert.Visible = true;
                 return false;
             }
@@ -435,9 +435,9 @@ namespace Bimba.SiteAgent
                 Log.Info($"installed: agent {installed.AgentId} for {installed.OrgSlug} via {auth["type"]}");
                 busy = false;
                 doneText.Text = $"This machine is registered to {installed.OrgName} as \"{installed.DisplayName}\".\n\n" +
-                                "The BIMBA Site Agent service is running and reports to the gateway every minute. " +
+                                "The BIMBA Site Agent service is running and reports to Setu every minute. " +
                                 "Your organization can see it in BIMBA Operations under Site agents.\n\n" +
-                                $"Gateway: {installed.Server}\nAgent id: {installed.AgentId}\nLog: {Log.FilePath}\n\n" +
+                                $"Setu: {installed.Server}\nAgent id: {installed.AgentId}\nLog: {Log.FilePath}\n\n" +
                                 "To remove it later use Settings > Apps (BIMBA Site Agent).";
                 Show(5);
             }

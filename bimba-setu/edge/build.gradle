@@ -1,0 +1,37 @@
+// BIMBA edge collector: started by the BIMBA Site Agent service on the SCADA machine. Reads OPC UA / Modbus TCP
+// sources with Setu's own drivers (collect-lib) and talks JSON lines with the service on stdin/stdout.
+// `gradle :edge:edgeDist` -> edge/build/edge/lib/*.jar (packaged with a jlink Java 17 runtime by
+// scripts/build-site-agent.ps1).
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
+version = '1.7.1'                                                  // keep in step with the site agent
+
+jar {
+    archiveFileName = 'bimba-edge.jar'
+    manifest { attributes 'Implementation-Version': project.version, 'Main-Class': 'com.bimba.edge.EdgeMain' }
+}
+
+dependencies {
+    implementation project(':collect-lib')
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.16'                    // logs to stderr (the service writes them to agent.log)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+}
+
+tasks.register('edgeDist', Sync) {                // Sync: jars no longer used are removed
+    dependsOn jar
+    into layout.buildDirectory.dir('edge/lib')
+    from jar
+    from configurations.runtimeClasspath
+}

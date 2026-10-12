@@ -10,7 +10,7 @@ namespace Bimba.SiteAgent
     /// <summary>Windows service "BIMBASiteAgent": heartbeat loop + edge collector (data sources -> gateway).</summary>
     internal sealed class AgentService : ServiceBase
     {
-        /// <summary>sent by the uninstaller: tell the gateway, delete the certificate, stop reporting</summary>
+        /// <summary>sent by the uninstaller: tell Setu, delete the certificate, stop reporting</summary>
         public const int UninstallCommand = 200;
 
         private readonly ManualResetEvent stopping = new ManualResetEvent(false);
@@ -58,11 +58,11 @@ namespace Bimba.SiteAgent
                 {
                     using (var s = new Session(cfg, persist: false))
                         s.Client.Heartbeat(cfg, null, "uninstalled");
-                    Log.Info("told the gateway that this machine is being removed");
+                    Log.Info("told Setu that this machine is being removed");
                 }
                 catch (Exception e)
                 {
-                    Log.Warn("could not notify the gateway: " + e.Message);
+                    Log.Warn("could not notify Setu: " + e.Message);
                 }
                 AgentCertificate.Delete(cfg.CertThumbprint);
             }
@@ -79,8 +79,8 @@ namespace Bimba.SiteAgent
     }
 
     /// <summary>
-    /// The agent's connection to the gateway and its credential: the client certificate once it has one, before that
-    /// the secret from enrollment. Gets the first certificate when the gateway asks for it and renews it in time.
+    /// The agent's connection to Setu and its credential: the client certificate once it has one, before that
+    /// the secret from enrollment. Gets the first certificate when Setu asks for it and renews it in time.
     /// </summary>
     internal sealed class Session : IDisposable
     {
@@ -97,7 +97,7 @@ namespace Bimba.SiteAgent
             this.persist = persist;
             Certificate = AgentCertificate.Find(cfg.CertThumbprint);
             if (cfg.CertThumbprint != null && Certificate == null)
-                Log.Warn("the client certificate " + cfg.CertThumbprint + " is missing from the service account's store. Reinstall the agent if the gateway refuses it.");
+                Log.Warn("the client certificate " + cfg.CertThumbprint + " is missing from the service account's store. Reinstall the agent if Setu refuses it.");
             Client = new GatewayClient(cfg.Server, cfg.PinnedCertSha256, Certificate);
         }
 
@@ -106,7 +106,7 @@ namespace Bimba.SiteAgent
             var resp = Client.Heartbeat(Cfg, machine);
             if (persist && Client.UsesCertificate && Cfg.SecretProtected != null)
             {
-                // the certificate works: the secret is no longer accepted by the gateway, so it is not kept either
+                // the certificate works: the secret is no longer accepted by Setu, so it is not kept either
                 Cfg.Secret = null;
                 Cfg.Save();
                 Log.Info("signed in with the client certificate; the agent secret was removed from this machine");
@@ -114,15 +114,17 @@ namespace Bimba.SiteAgent
             return resp;
         }
 
-        /// <summary>no certificate yet and the gateway offers one, or the current one is due for renewal</summary>
+        /// <summary>no certificate yet and Setu offers one, or the current one is due for renewal</summary>
         public bool CertificateDue(IDictionary<string, object> heartbeatAnswer) =>
             Certificate == null
                 ? heartbeatAnswer != null && heartbeatAnswer.TryGetValue("certificateWanted", out var v) && v is bool b && b
                 : AgentCertificate.NeedsRenewal(Certificate);
 
         /// <summary>
-        /// New key + certificate. The configuration points to the new certificate before it is first used; if it cannot
-        /// be used, the old credential is restored (the gateway keeps accepting it until the new one has been used).
+        /// New key + certificate. The configuration points to the new certificate before it is first used. Setu accepts
+        /// the new certificate from the moment it issued it, and the previous credential only until the new one is first
+        /// used. So the old credential is restored only when Setu refuses the new certificate; when the trial heartbeat
+        /// fails without an answer (it may have reached Setu, which then no longer accepts the old one), the new one is kept.
         /// </summary>
         public void UpdateCertificate()
         {
@@ -147,7 +149,16 @@ namespace Bimba.SiteAgent
             try
             {
                 if (persist) Cfg.Save();
-                trial.Heartbeat(Cfg, null);     // first use: the gateway now refuses the previous credential
+                trial.Heartbeat(Cfg, null);     // first use: Setu now refuses the previous credential
+            }
+            catch (Exception e) when (!(e is GatewayException g && (g.Status == 401 || g.Status == 403 || g.Status == 410)))
+            {
+                // no answer: keep the new certificate (always valid); the secret goes after the first confirmed heartbeat
+                Log.Warn("the new client certificate was not confirmed yet (" + e.Message + "); it stays in use");
+                Client.Dispose();
+                Client = trial;
+                Certificate = fresh;
+                return;
             }
             catch (Exception e) when (!(e is GatewayException g && g.Status == 410))
             {
@@ -243,7 +254,7 @@ namespace Bimba.SiteAgent
                     {
                         failures++;
                         if (failures == 1 || failures % 10 == 0) Log.Warn($"heartbeat failed ({failures}x): {e.Message}");
-                        lastFull = DateTime.MinValue;          // resend the details once the gateway is back
+                        lastFull = DateTime.MinValue;          // resend the details once Setu is back
                         wait = Math.Min(600, cfg.HeartbeatSeconds * Math.Min(failures, 5));
                     }
                     if (stop.WaitOne(TimeSpan.FromSeconds(wait))) return;

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Removal (not upgrade): stop the service and tell Setu this computer is being removed.
+set -e
+if [ "$1" = "remove" ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl disable --now bimba-site-agent >/dev/null 2>&1 || true
+    fi
+    /opt/bimba-site-agent/bin/bimba-site-agent uninstall-notify || true
+fi
+exit 0

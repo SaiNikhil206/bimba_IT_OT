@@ -4,13 +4,13 @@
     {
       "name": "gateway-ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "bimba-gateway/ui", "run", "dev"],
+      "runtimeArgs": ["--prefix", "bimba-setu/ui", "run", "dev"],
       "port": 5174
     },
     {
       "name": "gateway-ui-alt",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "bimba-gateway/ui", "run", "dev", "--", "--port", "5175", "--strictPort"],
+      "runtimeArgs": ["--prefix", "bimba-setu/ui", "run", "dev", "--", "--port", "5175", "--strictPort"],
       "port": 5175
     }
   ]

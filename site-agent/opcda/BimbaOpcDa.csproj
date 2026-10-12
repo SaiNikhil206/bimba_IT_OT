@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- bimba-opcda.exe: the OPC DA (classic, COM/DCOM) bridge of the BIMBA Site Agent's edge collector.
+       32-bit on purpose: classic OPC servers and the OPC Core Components proxies are mostly 32-bit, and a 32-bit client
+       reaches 32- and 64-bit out-of-process servers alike. Its own process, so a misbehaving OPC server cannot take
+       the agent down. Started by the Java edge collector (OpcDaBridge), JSON lines over stdin/stdout.
+       No third-party OPC libraries: the OPC DA 2.05 custom interfaces are declared in OpcDaInterop.cs.
+       Built by scripts/build-site-agent.ps1 into edge.zip (edge\opcda\bimba-opcda.exe). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <AssemblyName>bimba-opcda</AssemblyName>
+    <RootNamespace>Bimba.OpcDa</RootNamespace>
+    <PlatformTarget>x86</PlatformTarget>
+    <Prefer32Bit>true</Prefer32Bit>
+    <Version>1.7.1</Version>
+    <Product>BIMBA Site Agent</Product>
+    <Company>BIMBA</Company>
+    <Description>OPC DA bridge of the BIMBA Site Agent</Description>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Web.Extensions" />
+    <Compile Include="..\src\Json.cs" Link="Json.cs" />
+  </ItemGroup>
+</Project>

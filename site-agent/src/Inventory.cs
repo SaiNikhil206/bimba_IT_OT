@@ -141,7 +141,7 @@ namespace Bimba.SiteAgent
                 };
             }).ToList(), new List<object>());
 
-        /// <summary>The local address used to reach the gateway (falls back to the first interface with a default gateway).</summary>
+        /// <summary>The local address used to reach Setu (falls back to the first interface with a default gateway).</summary>
         private static string PrimaryIp(string serverUrl)
         {
             string viaRoute = Safe(() =>

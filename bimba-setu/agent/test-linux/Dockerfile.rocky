@@ -1,0 +1,8 @@
+# Test computer for the Linux site agent's .tar.gz on the RHEL family: Rocky Linux 9 with systemd as PID 1 and Java 17
+# (install.sh does not install Java; the RHEL package is java-17-openjdk-headless). Run it like Dockerfile.
+FROM rockylinux:9
+RUN dnf install -y --setopt=install_weak_deps=False systemd java-17-openjdk-headless procps-ng tar gzip \
+ && dnf clean all \
+ && systemctl mask systemd-logind.service getty.target console-getty.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/sbin/init"]

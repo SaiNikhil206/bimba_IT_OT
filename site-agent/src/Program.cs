@@ -12,14 +12,14 @@ namespace Bimba.SiteAgent
 {
     /// <summary>
     /// BIMBA-Site-Agent-Setup.exe
-    ///   (no arguments)        setup wizard (asks for the gateway, then an enrollment token or an organization user)
+    ///   (no arguments)        setup wizard (asks for Setu, then an enrollment token or an organization user)
     ///   install ...           silent install for mass roll-out (see Usage)
     ///   uninstall [--quiet]   remove (also used by Apps / Programs and Features)
     ///   status                show what is installed
     ///   inventory             print the machine details that would be shared (nothing is sent)
     ///   test ...              check credentials: enroll + one heartbeat (+ client certificate) without installing anything
     ///   enroll ...            MSI step: register and write the configuration only (files + service belong to the MSI)
-    ///   uninstall-notify      MSI step: tell the gateway (through the service, which holds the certificate)
+    ///   uninstall-notify      MSI step: tell Setu (through the service, which holds the certificate)
     ///   remove-data           MSI step: delete the configuration and logs
     ///   service               entry point of the Windows service
     /// </summary>
@@ -36,8 +36,8 @@ namespace Bimba.SiteAgent
   For Intune / SCCM / Group Policy use BIMBA-Site-Agent.msi:
     msiexec /i BIMBA-Site-Agent.msi /qn SERVER=<gateway> TOKEN=<enrollment token> [SITE=<site>] [TRUSTCERT=<sha256>]
 
-  options: --name <display name>  --site <site / location>  --trust-cert <sha256 of a self-signed gateway certificate>
-  --server (and --trust-cert) can be left out when this .exe was downloaded from the gateway console.
+  options: --name <display name>  --site <site / location>  --trust-cert <sha256 of a self-signed Setu certificate>
+  --server (and --trust-cert) can be left out when this .exe was downloaded from the Setu console.
   The token can also come from the BIMBA_ENROLL_TOKEN environment variable. Without --password-stdin the
   password is asked for on the console. Run install/uninstall from an elevated (administrator) prompt.
   Exit codes: 0 ok, 1 failed, 2 usage, 3 credentials refused, 4 choose --org, 5 not elevated.";
@@ -170,7 +170,7 @@ namespace Bimba.SiteAgent
         {
             bool installForReal = mode != Mode.Test;
             if (installForReal && !Installer.IsElevated) return NotElevated();
-            // an installer downloaded from the gateway console already knows the gateway (and its certificate)
+            // an installer downloaded from the Setu console already knows Setu (and its certificate)
             if (!opt.TryGetValue("server", out var server) && (server = Preset.Current?.Server) == null)
                 throw new ArgumentException("--server is required");
             if (!opt.TryGetValue("trust-cert", out var pin)) pin = Preset.PinFor(server);
@@ -191,7 +191,7 @@ namespace Bimba.SiteAgent
                 auth["token"] = token.Trim();
             }
             if (GatewayClient.IsPlainHttpToRemote(server))
-                Console.WriteLine("warning: " + server + " is plain HTTP, credentials are sent unencrypted. Use the gateway's HTTPS address (port 8443).");
+                Console.WriteLine("warning: " + server + " is plain HTTP, credentials are sent unencrypted. Use Setu's HTTPS address (port 8443).");
 
             using (var client = new GatewayClient(server, pin))
             {
@@ -239,7 +239,7 @@ namespace Bimba.SiteAgent
                     {
                         using (var withSecret = new GatewayClient(cfg.Server, cfg.PinnedCertSha256))
                             withSecret.Heartbeat(cfg, null);
-                        Console.WriteLine("WARNING: the gateway still accepts the agent secret.");
+                        Console.WriteLine("WARNING: Setu still accepts the agent secret.");
                     }
                     catch (GatewayException e) when (e.Status == 401)
                     {

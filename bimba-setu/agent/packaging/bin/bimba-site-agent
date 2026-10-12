@@ -1,0 +1,47 @@
+#!/bin/sh
+# BIMBA Site Agent for Linux: finds a Java 17+ runtime and starts the agent (see `bimba-site-agent help`).
+# Java, in this order: $BIMBA_JAVA, the bundled runtime (<home>/runtime), $JAVA_HOME, java on the PATH, /usr/lib/jvm.
+# Settings: /etc/default/bimba-site-agent (BIMBA_JAVA, JAVA_OPTS, HTTPS_PROXY, ...).
+
+if [ -z "$BIMBA_AGENT_HOME" ]; then
+    self=$(readlink -f "$0" 2>/dev/null || echo "$0")
+    BIMBA_AGENT_HOME=$(cd "$(dirname "$self")/.." && pwd)
+fi
+export BIMBA_AGENT_HOME
+if [ -z "$INVOCATION_ID" ] && [ -r /etc/default/bimba-site-agent ]; then
+    . /etc/default/bimba-site-agent          # systemd reads it itself (EnvironmentFile)
+    export BIMBA_JAVA JAVA_OPTS HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy 2>/dev/null
+fi
+
+java_major() {
+    "$1" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java\.specification\.version = \([0-9]*\).*/\1/p' | head -n 1
+}
+
+usable() {
+    [ -x "$1" ] || return 1
+    v=$(java_major "$1")
+    [ -n "$v" ] && [ "$v" -ge 17 ] 2>/dev/null
+}
+
+JAVA=""
+for candidate in "$BIMBA_JAVA" "$BIMBA_AGENT_HOME/runtime/bin/java" "${JAVA_HOME:+$JAVA_HOME/bin/java}" "$(command -v java 2>/dev/null)" \
+        /usr/lib/jvm/*/bin/java; do
+    if [ -n "$candidate" ] && usable "$candidate"; then
+        JAVA=$candidate
+        break
+    fi
+done
+if [ -z "$JAVA" ]; then
+    echo "error: the BIMBA Site Agent needs Java 17 or newer. Install it with one of:" >&2
+    echo "  Debian / Ubuntu / Raspberry Pi OS:  sudo apt install openjdk-17-jre-headless" >&2
+    echo "  RHEL / Rocky / Alma / Fedora:       sudo dnf install java-17-openjdk-headless" >&2
+    echo "  SUSE:                               sudo zypper install java-17-openjdk-headless" >&2
+    echo "or set BIMBA_JAVA in /etc/default/bimba-site-agent." >&2
+    exit 1
+fi
+
+# small and quick to start: fits a Raspberry Pi Zero 2 W; JAVA_OPTS comes last, so it can override (for example -Xmx512m)
+# shellcheck disable=SC2086
+exec "$JAVA" -Xms16m -Xmx160m -Xss512k -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:+ExitOnOutOfMemoryError \
+    -Dfile.encoding=UTF-8 -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -Dorg.slf4j.simpleLogger.showDateTime=false \
+    $JAVA_OPTS -cp "$BIMBA_AGENT_HOME/lib/bimba-site-agent.jar" com.bimba.agent.AgentMain "$@"

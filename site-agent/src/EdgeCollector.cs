@@ -12,15 +12,17 @@ using System.Threading.Tasks;
 namespace Bimba.SiteAgent
 {
     /// <summary>
-    /// The agent as edge collector. Reads the data sources configured for this machine in the gateway console
+    /// The agent as edge collector. Reads the data sources configured for this machine in the Setu console
     /// (GET /system/bimba-agent-config, refetched when the heartbeat's configVersion changes or the console says so),
-    /// collects them with the edge process (Java: OPC UA, Modbus TCP), keeps every reading in a disk buffer and uploads
-    /// the buffer in batches (POST /system/bimba-agent-readings), so nothing is lost while the gateway is unreachable.
+    /// collects them with the edge process (Java: OPC UA, Modbus TCP; OPC DA through its 32-bit COM bridge bimba-opcda.exe),
+    /// keeps every reading in a disk buffer and uploads
+    /// the buffer in batches (POST /system/bimba-agent-readings), so nothing is lost while Setu is unreachable.
     /// Console requests (test a connection, browse tags) arrive through a long-poll (POST /system/bimba-agent-commands).
     /// </summary>
     internal sealed class EdgeCollector : IDisposable
     {
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("BIMBA Site Agent sources v1");
+        private const int MaxUploadChars = 250 * 1024;   // Setu refuses requests over 256 KB (413)
 
         private readonly AgentConfig cfg;
         private readonly Func<X509Certificate2> certificate;
@@ -29,7 +31,7 @@ namespace Bimba.SiteAgent
         private readonly Spool spool = new Spool(Paths.SpoolDir);
         private readonly List<Thread> threads = new List<Thread>();
         private readonly object configGate = new object();
-        private IDictionary<string, object> config;       // last config from the gateway
+        private IDictionary<string, object> config;       // last config from Setu
         private string appliedVersion;
         private volatile string wantedVersion;
         private long sent, rejected;
@@ -74,7 +76,7 @@ namespace Bimba.SiteAgent
 
         // ------------------------------------------------------------------ config
 
-        /// <summary>called with every heartbeat answer: fetch the config when the gateway has a newer one</summary>
+        /// <summary>called with every heartbeat answer: fetch the config when Setu has a newer one</summary>
         public void OnHeartbeat(IDictionary<string, object> resp)
         {
             string v = Json.Str(resp, "configVersion");
@@ -103,7 +105,7 @@ namespace Bimba.SiteAgent
                 catch (Exception e)
                 {
                     lastConfigError = e.Message;
-                    Log.Warn("could not fetch the data sources from the gateway: " + e.Message);
+                    Log.Warn("could not fetch the data sources from Setu: " + e.Message);
                 }
             }
         }
@@ -112,9 +114,9 @@ namespace Bimba.SiteAgent
         {
             var sources = (c.TryGetValue("sources", out var s) ? s as object[] : null)?.OfType<IDictionary<string, object>>().ToList()
                           ?? new List<IDictionary<string, object>>();
-            var forEdge = sources.Where(x => Json.Str(x, "kind") == "opcua" || Json.Str(x, "kind") == "modbus").ToList();
-            int other = sources.Count - forEdge.Count;
-            Log.Info($"data sources: {sources.Count} ({forEdge.Count} OPC UA / Modbus" + (other > 0 ? $", {other} OPC DA (not collected yet)" : "") + ")");
+            var forEdge = sources.Where(x => Collectable(Json.Str(x, "kind"))).ToList();
+            int da = forEdge.Count(x => Json.Str(x, "kind") == "opcda");
+            Log.Info($"data sources: {sources.Count} ({forEdge.Count - da} OPC UA / Modbus / MQTT / S7 / EtherNet/IP / DNP3 / IEC 104 / SQL, {da} OPC DA)");
             var line = new Dictionary<string, object>
             {
                 ["op"] = "config",
@@ -124,6 +126,10 @@ namespace Bimba.SiteAgent
             };
             edge.Configure(Json.Serialize(line), forEdge.Count > 0);
         }
+
+        private static bool Collectable(string kind) =>
+            kind == "opcua" || kind == "modbus" || kind == "mqtt" || kind == "s7" || kind == "eip" || kind == "dnp3" || kind == "iec104"
+            || kind == "sql" || kind == "opcda";
 
         private static IDictionary<string, object> LoadCache()
         {
@@ -181,12 +187,16 @@ namespace Bimba.SiteAgent
                         clientCert = thumb;
                     }
                     int wait = 0;
+                    var lines = new List<string>();
                     try
                     {
-                        var lines = File.ReadAllLines(file).Where(l => l.Length > 1).ToList();
+                        lines = File.ReadAllLines(file).Where(l => l.Length > 1).ToList();
+                        var body = "{\"messages\":[" + string.Join(",", lines) + "]}";
+                        // a file from an older agent can be over Setu's request limit: upload it in halves
+                        if (body.Length > MaxUploadChars && spool.Split(file, lines)) continue;
                         if (lines.Count > 0)
                         {
-                            var resp = client.PostReadings(cfg, "{\"messages\":[" + string.Join(",", lines) + "]}");
+                            var resp = client.PostReadings(cfg, body);
                             Interlocked.Add(ref sent, Json.Int(resp, "accepted", 0));
                             Interlocked.Add(ref rejected, Json.Int(resp, "rejected", 0));
                         }
@@ -198,8 +208,15 @@ namespace Bimba.SiteAgent
                     }
                     catch (GatewayException e) when (e.Status == 400 || e.Status == 413 || e.Status == 422)
                     {
-                        Log.Warn("the gateway refused a batch of readings (" + e.Status + "): " + e.Message + "; moved to spool\\rejected");
-                        spool.Reject(file);
+                        if (e.Status == 413 && spool.Split(file, lines))
+                        {
+                            Log.Info($"Setu found a batch of {lines.Count} readings too large; sending it in two halves");
+                        }
+                        else
+                        {
+                            Log.Warn("Setu refused a batch of readings (" + e.Status + "): " + e.Message + "; moved to spool\\rejected");
+                            spool.Reject(file);
+                        }
                     }
                     catch (Exception e)
                     {
@@ -273,17 +290,12 @@ namespace Bimba.SiteAgent
                 {
                     var source = Json.Obj(req, "source");
                     string sourceKind = Json.Str(source, "kind");
-                    if (sourceKind == "opcua" || sourceKind == "modbus")
+                    if (Collectable(sourceKind))
                     {
                         var r = edge.Request(kind, req, TimeSpan.FromSeconds(40));
                         answer["ok"] = r.TryGetValue("ok", out var ok) && ok is bool b && b;
                         answer["result"] = r.TryGetValue("result", out var res) ? res : null;
                         answer["error"] = Json.Str(r, "error");
-                    }
-                    else if (sourceKind == "opcda")
-                    {
-                        answer["ok"] = false;
-                        answer["error"] = "OPC DA sources are collected from agent version 1.5 on.";
                     }
                     else
                     {
@@ -373,6 +385,8 @@ namespace Bimba.SiteAgent
         }
 
         private static string JavaExe => Path.Combine(Paths.EdgeDir, "runtime", "bin", "java.exe");
+        /// <summary>the 32-bit OPC DA (COM) bridge the edge process starts for OPC DA sources</summary>
+        private static string OpcDaExe => Path.Combine(Paths.EdgeDir, "opcda", "bimba-opcda.exe");
         private static string LibDir => Path.Combine(Paths.EdgeDir, "lib");
         public static bool Installed => File.Exists(JavaExe) && Directory.Exists(LibDir);
 
@@ -439,7 +453,7 @@ namespace Bimba.SiteAgent
                         "-Dorg.slf4j.simpleLogger.showDateTime=false", "-Dfile.encoding=UTF-8",
                         "-cp", Q(Path.Combine(LibDir, "*")), "com.bimba.edge.EdgeMain",
                         "--pki", Q(Paths.EdgePkiDir), "--host", Q(Environment.MachineName),
-                    }),
+                    }.Concat(File.Exists(OpcDaExe) ? new[] { "--opcda", Q(OpcDaExe) } : new string[0])),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardInput = true,
@@ -625,7 +639,7 @@ namespace Bimba.SiteAgent
         /// <summary>installer: ends edge processes still running from the install folder (before replacing the files)</summary>
         public static void KillStray()
         {
-            foreach (var p in Process.GetProcessesByName("java"))
+            foreach (var p in Process.GetProcessesByName("java").Concat(Process.GetProcessesByName("bimba-opcda")))
             {
                 try
                 {
@@ -649,12 +663,16 @@ namespace Bimba.SiteAgent
     }
 
     /// <summary>
-    /// Disk buffer for readings: one JSON message per line, files of up to 1000 messages (written at least every
-    /// second), oldest uploaded first. Capped at 1 GB: beyond that the oldest files are dropped (and logged).
+    /// Disk buffer for readings: one JSON message per line, files of up to 1000 messages or MaxFileChars (written at
+    /// least every second), oldest uploaded first. A file is one upload, so it must stay under Setu's request limit
+    /// (256 KB); a file that is still too big (older agents wrote up to 1000 messages) is split, not discarded.
+    /// Capped at 1 GB: beyond that the oldest files are dropped (and logged).
     /// </summary>
     internal sealed class Spool
     {
         private const int MaxPerFile = 1000;
+        private const int MaxFileChars = 200 * 1024;      // well under 256 KB, room for the {"messages":[…]} wrapper
+        private const int MaxRejectedFiles = 200;         // refused files kept in rejected\ (oldest removed beyond this)
         private const long MaxBytes = 1L << 30;
         private readonly string dir;
         private readonly object gate = new object();
@@ -679,9 +697,10 @@ namespace Bimba.SiteAgent
         {
             lock (gate)
             {
+                if (count > 0 && current.Length + message.Length + 1 > MaxFileChars) FlushLocked();
                 if (count == 0) firstAt = DateTime.UtcNow;
                 current.Append(message).Append('\n');
-                if (++count >= MaxPerFile) FlushLocked();
+                if (++count >= MaxPerFile || current.Length >= MaxFileChars) FlushLocked();
             }
         }
 
@@ -748,6 +767,36 @@ namespace Bimba.SiteAgent
             try { File.Delete(file); } catch (Exception e) { Log.Warn("disk buffer: " + e.Message); }
         }
 
+        /// <summary>
+        /// Replaces the file by two files with its first and second half, sorted at its place (name + "a" / "b"), so they
+        /// are uploaded next and in order. False when it has a single message (it cannot get smaller).
+        /// </summary>
+        public bool Split(string file, List<string> lines)
+        {
+            if (lines.Count < 2) return false;
+            string stem = Path.Combine(dir, Path.GetFileNameWithoutExtension(file));
+            int half = lines.Count / 2;
+            try
+            {
+                WriteAtomic(stem + "a", lines.GetRange(0, half));
+                WriteAtomic(stem + "b", lines.GetRange(half, lines.Count - half));
+                File.Delete(file);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("disk buffer: cannot split " + Path.GetFileName(file) + ": " + e.Message);
+                return false;
+            }
+        }
+
+        private static void WriteAtomic(string stem, List<string> lines)
+        {
+            File.WriteAllText(stem + ".tmp", string.Join("\n", lines) + "\n", new UTF8Encoding(false));
+            if (File.Exists(stem + ".jsonl")) File.Delete(stem + ".jsonl");
+            File.Move(stem + ".tmp", stem + ".jsonl");
+        }
+
         public void Reject(string file)
         {
             try
@@ -755,6 +804,8 @@ namespace Bimba.SiteAgent
                 var rejectedDir = Path.Combine(dir, "rejected");
                 Directory.CreateDirectory(rejectedDir);
                 File.Move(file, Path.Combine(rejectedDir, Path.GetFileName(file)));
+                var kept = Directory.GetFiles(rejectedDir).OrderBy(f => f, StringComparer.Ordinal).ToList();
+                for (int i = 0; i < kept.Count - MaxRejectedFiles; i++) File.Delete(kept[i]);
             }
             catch (Exception e)
             {

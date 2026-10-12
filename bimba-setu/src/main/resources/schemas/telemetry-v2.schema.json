@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bimba:schema:telemetry:v2",
+  "title": "BIMBA canonical telemetry envelope, schema version 2.x",
+  "description": "One reading of one tag in the BRD/FRD canonical envelope (FR-CAN-01, section 8.1), snake_case. Every 2.x version validates here: minor versions only add optional fields, so properties not listed are allowed and consumers must ignore them.",
+  "type": "object",
+  "required": ["schema_version", "message_id", "plant_id", "machine_id", "tag_name", "tag_value", "timestamp", "quality"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^2\\.[0-9]+$" },
+    "message_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "plant_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "machine_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "tag_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "tag_value": { "type": ["number", "boolean", "string", "null"] },
+    "data_type": { "type": ["string", "null"], "maxLength": 40, "description": "Double, Boolean, String (Ignition-style names; Float4, Int4, ... are read too)" },
+    "unit": { "type": ["string", "null"], "maxLength": 40 },
+    "quality": { "enum": ["GOOD", "UNCERTAIN", "BAD"] },
+    "quality_detail": { "type": ["string", "null"], "maxLength": 2000 },
+    "timestamp": { "$ref": "#/$defs/utc", "description": "when the value was read (UTC)" },
+    "source_timestamp": { "$ref": "#/$defs/utc", "description": "the device's own time for the value, when the protocol reports one" },
+    "ingest_time": { "$ref": "#/$defs/utc", "description": "when Setu accepted the message" },
+    "category": { "type": "string", "maxLength": 40 },
+    "writable": { "type": "boolean" },
+    "description": { "type": "string", "maxLength": 500 },
+    "source": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "IGNITION (Path I) or DIRECT (Path D, BIMBA adapters), BR-12" },
+        "protocol": { "type": "string", "description": "OPCUA, MODBUS_TCP, OPCDA, MQTT, S7, ETHERNET_IP, DNP3, IEC104, SQL, EXPRESSION, ..." },
+        "address": { "type": ["string", "null"] },
+        "interface": { "type": ["string", "null"], "description": "N1_MQTT, N2_REST, N3_OPCUA (Ignition) or BIMBA_GATEWAY / BIMBA_SITE_AGENT" }
+      }
+    },
+    "attributes": { "type": "object" },
+    "edge": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "data_type": { "enum": ["Double", "Float", "Float4", "Float8", "Int1", "Int2", "Int4", "Int8", "Integer", "Long"] } }, "required": ["data_type"] },
+      "then": { "properties": { "tag_value": { "type": ["number", "null"] } } } },
+    { "if": { "properties": { "data_type": { "const": "Boolean" } }, "required": ["data_type"] },
+      "then": { "properties": { "tag_value": { "type": ["boolean", "null"] } } } },
+    { "if": { "properties": { "data_type": { "enum": ["String", "Text"] } }, "required": ["data_type"] },
+      "then": { "properties": { "tag_value": { "type": ["string", "null"] } } } }
+  ],
+  "$defs": {
+    "utc": { "type": "string", "format": "date-time", "pattern": "Z$" }
+  }
+}

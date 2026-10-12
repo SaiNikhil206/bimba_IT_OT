@@ -62,38 +62,40 @@ its document, so it sees exactly the JSON below.
 | Field | Notes |
 |---|---|
 | `messageId` | Unique per value change. End systems **de-duplicate** on it (delivery is at-least-once) |
-| `schemaVersion` | `major.minor`, see *Versions* below. The BIMBA Gateway writes `1.1` |
+| `schemaVersion` | `major.minor`, see *Versions* below. The BIMBA Setu writes `1.1` |
 | `tagValue` / `dataType` | number, boolean, string, or null (BAD quality, NaN, no value). `dataType` always matches the value |
 | `unit` | the tag's engineering unit. When a tag names its device's unit (`sourceUnit`), values are converted to `unit` first (degF → degC, psi → bar, ...) |
-| `quality` | `GOOD` / `UNCERTAIN` / `BAD`. UNCERTAIN = there is a value but it is doubted: the device said so (OPC UA `Uncertain_*`) or it is outside the tag's engineering range (`engLow` / `engHigh`). `qualityDetail` says why when not GOOD |
+| `quality` | `GOOD` / `UNCERTAIN` / `BAD`. UNCERTAIN = there is a value but it is doubted: the device said so (OPC UA `Uncertain_*`) or it is outside the tag's engineering range (`engLow` / `engHigh`). `qualityDetail` says why when not GOOD; for OPC UA in words, e.g. `Uncertain_SensorNotAccurate: <the OPC UA specification's description> (OPC UA 0x40930000)` |
 | `timestamp` | When the value was read (UTC, ISO-8601 with `Z`) |
-| `sourceTimestamp` | Since 1.1, optional: the device's own time for the value, when the protocol reports one (OPC UA) |
-| `ingestTime` | Since 1.1: when the gateway accepted the message (after its schema check) |
+| `sourceTimestamp` | Since 1.1, optional: the device's own time for the value, when the protocol reports one (OPC UA, IEC 104 time-tagged objects, DNP3 frozen counters with time, the time column of a SQL source) |
+| `ingestTime` | Since 1.1: when Setu accepted the message (after its schema check) |
 | `edge.session` + `edge.seq` | Gap-free counter per session (a new session starts on module start or config reload), used for loss audits |
 
 ## Versions (FR-CAN-05)
 
-The format of one message is the JSON Schema `bimba-gateway/src/main/resources/schemas/telemetry-v1.schema.json`
+The format of one message is the JSON Schema `bimba-setu/src/main/resources/schemas/telemetry-v1.schema.json`
 (every 1.x version). Rules:
 
 * **Minor version** (1.0 → 1.1): only optional fields or new values are added. Every consumer of 1.0 reads 1.1
   unchanged, so **consumers must ignore fields they do not know**. The schema allows unknown fields for this reason.
 * **Major version** (1.x → 2.0): a field is renamed, removed, retyped or made required. It gets its own schema file
-  (`telemetry-v2.schema.json`), the gateway accepts both majors while senders move over, and existing consumers keep
+  (`telemetry-v2.schema.json`), Setu accepts both majors while senders move over, and existing consumers keep
   receiving the previous major until they are moved.
-* The gateway checks every message before routing (FR-RTE-01). Messages that fail go to the **quarantine** with
+* Setu checks every message before routing (FR-RTE-01). Messages that fail go to the **quarantine** with
   their raw text and a reason code (`SCHEMA_INVALID`, `UNSUPPORTED_VERSION`, `MALFORMED_JSON`, `UNKNOWN_MACHINE`),
-  where they can be inspected, replayed after a fix, or discarded (gateway console → Quarantine).
+  where they can be inspected, replayed after a fix, or discarded (Setu console → Quarantine).
 
 | Version | Change |
 |---|---|
 | 1.0 | first format (site agents with older edge collectors still send it; still valid) |
 | 1.1 | `sourceTimestamp`, `ingestTime`; quality `UNCERTAIN` in use; unit conversion to the tag's unit |
-| 2.0 | the BRD canonical envelope (FR-CAN-01): snake_case names, `data_type` Double / Boolean / String, `source.path` + `source.interface`, batches as `records` |
+| 1.2 | from the tag registry: `dataTypeName` (Int4, Float8, …), `writable`, `description`; `source.tag` = the tag as collected when the registry renamed it |
+| 1.3 | gap markers (FR-RES-03): messages of category `gap`, tag `_connection`, value `lost` / `restored`, with `gap {state: start \| end, from, to, seconds, device, reason}`, when a device or site agent stops and starts answering; not readings, receivers that store readings can skip `category = gap` |
+| 2.0 | the BRD canonical envelope (FR-CAN-01): snake_case names, `data_type` Double / Boolean / String (or the registry's type), `source.path` + `source.interface`, batches as `records` |
 
 ### Format 2.0 (BRD canonical envelope)
 
-Schema: `bimba-gateway/src/main/resources/schemas/telemetry-v2.schema.json`. Required: `schema_version`, `message_id`,
+Schema: `bimba-setu/src/main/resources/schemas/telemetry-v2.schema.json`. Required: `schema_version`, `message_id`,
 `plant_id`, `machine_id`, `tag_name`, `tag_value`, `timestamp`, `quality`.
 
 ```json
@@ -120,7 +122,7 @@ Schema: `bimba-gateway/src/main/resources/schemas/telemetry-v2.schema.json`. Req
 |---|---|
 | `schemaVersion`, `messageId`, `plantId`, `machineId`, `tagName`, `tagValue`, `qualityDetail`, `sourceTimestamp`, `ingestTime` | the same names in snake_case |
 | `dataType` number / boolean / string / null | `data_type` Double / Boolean / String / null (Float4, Int4, … are read too) |
-| `source.protocol` opcua / modbus / expression | `source.protocol` OPCUA / MODBUS_TCP / EXPRESSION, plus `source.path` (DIRECT = BIMBA adapters, IGNITION) and `source.interface` (BIMBA_GATEWAY, BIMBA_SITE_AGENT, or N1_MQTT / N2_REST / N3_OPCUA from Ignition) |
+| `source.protocol` opcua / modbus / opcda / mqtt / s7 / eip / dnp3 / iec104 / sql / expression | `source.protocol` OPCUA / MODBUS_TCP / OPCDA / MQTT / S7 / ETHERNET_IP / DNP3 / IEC104 / SQL / EXPRESSION, plus `source.path` (DIRECT = BIMBA adapters, IGNITION) and `source.interface` (BIMBA_GATEWAY, BIMBA_SITE_AGENT, or N1_MQTT / N2_REST / N3_OPCUA from Ignition) |
 | batch `{schemaVersion, batchId, plantId, edgeId, …, messages:[…]}` | batch `{schema_version, batch_id, plant_id, edge_id, …, records:[…]}` |
 | — | `attributes`: free key / values, passed on unchanged |
 
@@ -130,8 +132,8 @@ Boomi services stay on 1.x, so their receivers keep working. Kafka headers and E
 destination's version (`batch_id`, `schema_version`, … for 2.0). Templates accept both spellings (`{machine_id}` =
 `{machineId}`).
 
-**What the gateway accepts.** Site agents and other senders may send 1.x or 2.x readings, also mixed in one request,
-as `{"messages":[…]}` or `{"records":[…]}`. Each is checked against its own schema; inside, the gateway keeps one
+**What Setu accepts.** Site agents and other senders may send 1.x or 2.x readings, also mixed in one request,
+as `{"messages":[…]}` or `{"records":[…]}`. Each is checked against its own schema; inside, Setu keeps one
 layout, so pipelines, selections and the BIMBA database work the same for both.
 
 Expected response (REST/MQTT): any **2xx** means accepted. **400/413/422** means rejected as invalid

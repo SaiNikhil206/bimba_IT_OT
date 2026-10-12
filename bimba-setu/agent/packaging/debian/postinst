@@ -1,0 +1,35 @@
+#!/bin/sh
+# BIMBA Site Agent package: service account, folders, systemd; registers the computer when BIMBA_SERVER and
+# BIMBA_ENROLL_TOKEN are given (unattended roll-out:
+#   sudo BIMBA_SERVER=https://gw:8443 BIMBA_ENROLL_TOKEN=<token> [BIMBA_TRUST_CERT=<sha256>] apt install ./bimba-site-agent_all.deb)
+set -e
+
+AGENT=/opt/bimba-site-agent/bin/bimba-site-agent
+CONF=/etc/bimba-site-agent/agent.json
+
+if [ "$1" = "configure" ]; then
+    if ! getent passwd bimba-agent >/dev/null; then
+        useradd --system --user-group --home-dir /var/lib/bimba-site-agent --no-create-home \
+            --shell /usr/sbin/nologin --comment "BIMBA Site Agent" bimba-agent
+    fi
+    install -d -m 0700 -o bimba-agent -g bimba-agent /etc/bimba-site-agent /var/lib/bimba-site-agent
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+
+    if [ ! -f "$CONF" ] && [ -n "$BIMBA_SERVER" ] && [ -n "$BIMBA_ENROLL_TOKEN" ]; then
+        "$AGENT" enroll || echo "BIMBA Site Agent: registration failed (see above). Run: sudo bimba-site-agent install --server <gateway> --token <token>"
+    fi
+
+    if [ -f "$CONF" ] && [ ! -f /var/lib/bimba-site-agent/uninstall-notified ]; then
+        if [ -d /run/systemd/system ]; then
+            systemctl enable bimba-site-agent >/dev/null 2>&1 || true
+            systemctl restart bimba-site-agent || true
+        fi
+        echo "BIMBA Site Agent is running (sudo bimba-site-agent status)."
+    else
+        echo "BIMBA Site Agent installed. Register this computer with your organization:"
+        echo "  sudo bimba-site-agent install --server https://<gateway>:8443 --token <enrollment token> [--site \"<site>\"]"
+    fi
+fi
+exit 0

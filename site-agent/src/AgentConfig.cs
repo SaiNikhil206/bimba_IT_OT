@@ -22,7 +22,7 @@ namespace Bimba.SiteAgent
         public static string LogDir => Path.Combine(DataDir, "logs");
         /// <summary>edge collector: Java runtime + jars, extracted by the installer</summary>
         public static string EdgeDir => Path.Combine(InstallDir, "edge");
-        /// <summary>readings waiting for the gateway (disk buffer)</summary>
+        /// <summary>readings waiting for Setu (disk buffer)</summary>
         public static string SpoolDir => Path.Combine(DataDir, "spool");
         /// <summary>the edge collector's data sources (DPAPI-protected: may contain OPC UA passwords)</summary>
         public static string SourcesFile => Path.Combine(DataDir, "sources.dat");
@@ -30,12 +30,12 @@ namespace Bimba.SiteAgent
         public static string EdgePkiDir => Path.Combine(DataDir, "edge-pki");
         /// <summary>short temp folder for the Java runtime (its Windows socket paths must stay short)</summary>
         public static string EdgeTempDir => Path.Combine(DataDir, "tmp");
-        /// <summary>written by the service when it has told the gateway about an uninstall</summary>
+        /// <summary>written by the service when it has told Setu about an uninstall</summary>
         public static string UninstallMarker => Path.Combine(DataDir, "uninstall-notified");
     }
 
     /// <summary>
-    /// What the installer stores on the machine: gateway address, agent id and the agent's own secret.
+    /// What the installer stores on the machine: Setu address, agent id and the agent's own secret.
     /// The secret is DPAPI-encrypted (machine scope) and the folder is readable only by SYSTEM,
     /// Administrators and the service account. Enrollment tokens and passwords are never stored.
     /// Once the service has its client certificate (see AgentCertificate) and has used it, the secret is removed:
@@ -53,7 +53,7 @@ namespace Bimba.SiteAgent
         public string DisplayName { get; set; }
         public string Site { get; set; }
         public int HeartbeatSeconds { get; set; } = 60;
-        /// <summary>SHA-256 of a self-signed gateway certificate the installer was told to trust (hex), or null.</summary>
+        /// <summary>SHA-256 of a self-signed Setu certificate the installer was told to trust (hex), or null.</summary>
         public string PinnedCertSha256 { get; set; }
         public string EnrolledAt { get; set; }
         /// <summary>thumbprint of the client certificate in the service account's personal store, or null</summary>

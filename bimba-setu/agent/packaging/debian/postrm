@@ -1,0 +1,15 @@
+#!/bin/sh
+# purge: delete the registration, buffered readings and the service account
+set -e
+if [ "$1" = "purge" ]; then
+    rm -rf /etc/bimba-site-agent /var/lib/bimba-site-agent
+    if getent passwd bimba-agent >/dev/null; then
+        userdel bimba-agent >/dev/null 2>&1 || true
+    fi
+fi
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+fi
+exit 0

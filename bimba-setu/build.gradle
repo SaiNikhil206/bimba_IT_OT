@@ -1,0 +1,65 @@
+// BIMBA Setu: our own SCADA edge server (replaces the Ignition gateway + BIMBA IT/OT Agent module).
+// Java 21 + Spring Boot 4 (Web MVC, Security, JDBC, Actuator); the console UI is the React + Vite app in ./ui,
+// built into src/main/resources/static by the Dockerfile. Built inside Docker; no local JDK needed.
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.bimba'
+version = '2.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'      // REST API + static console (embedded Tomcat)
+    implementation 'org.springframework.boot:spring-boot-starter-security'    // sign-in filter chain, CSRF, headers, @PreAuthorize
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'        // HikariCP + JdbcClient (shared PostgreSQL)
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'    // /actuator/health
+    implementation 'org.springframework.boot:spring-boot-starter-mail'        // password reset e-mails (SMTP)
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // field drivers + collector (Modbus TCP, OPC UA, gson), shared with the site agent's edge collector
+    implementation project(':collect-lib')
+    implementation 'org.bouncycastle:bcpkix-jdk18on:1.78.1'                    // site agent certificates (CSR, issuing)
+    implementation 'com.networknt:json-schema-validator:1.5.6'                // canonical messages vs. schemas/telemetry-v1 (FR-RTE-01)
+
+    // delivery
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+    implementation 'org.apache.kafka:kafka-clients:3.8.0'
+    implementation 'com.github.mwiede:jsch:0.2.20'                            // SFTP (FR-END-02)
+    implementation 'commons-net:commons-net:3.11.1'                           // FTP / FTPS (FR-END-02)
+    implementation 'org.apache.qpid:qpid-jms-client:2.5.0'                    // JMS over AMQP 1.0 (FR-END-04)
+    implementation 'com.rabbitmq:amqp-client:5.21.0'                          // AMQP 0-9-1, RabbitMQ (FR-END-04)
+    // the customer's own database (FR-END-05); PostgreSQL is above
+    runtimeOnly 'com.microsoft.sqlserver:mssql-jdbc'
+    runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'                        // MariaDB and MySQL (LGPL, unlike Connector/J)
+    runtimeOnly 'com.oracle.database.jdbc:ojdbc11'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // throwaway servers the destination tests deliver to
+    testImplementation 'org.apache.sshd:sshd-sftp:2.14.0'
+    testImplementation 'org.apache.ftpserver:ftpserver-core:1.2.0'
+    testImplementation 'com.h2database:h2'
+    testImplementation 'org.apache.activemq:artemis-server'              // version from Spring Boot
+    testImplementation 'org.apache.activemq:artemis-amqp-protocol'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+bootJar {
+    archiveFileName = 'bimba-setu.jar'
+}

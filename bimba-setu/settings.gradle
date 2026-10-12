@@ -1,0 +1,6 @@
+rootProject.name = 'bimba-setu'
+
+// collect-lib: field drivers + collector shared by Setu and the edge collector (Java 17, no Spring)
+// edge:        the BIMBA Site Agent's edge collector process (runs on the SCADA machine)
+// agent:       the BIMBA Site Agent for Linux / Raspberry Pi (Java; the Windows agent is site-agent/, .NET)
+include 'collect-lib', 'edge', 'agent'

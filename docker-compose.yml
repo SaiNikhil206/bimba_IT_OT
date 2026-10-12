@@ -1,10 +1,10 @@
 name: bimba
 
-# BIMBA Gateway (our own SCADA edge server)  --Event Streams REST-->  Boomi Event Streams (primary)
+# BIMBA Setu (our own SCADA edge server)  --Event Streams REST-->  Boomi Event Streams (primary)
 #   --> Boomi listener process | --REST/MQTT--> BIMBA Ingest (Django, failover)
 #   --> shared PostgreSQL  --> BIMBA (REST + WS, Django)  --> BIMBA live UI
 #
-#   http://localhost:8090   BIMBA Gateway console (Django superuser), https://localhost:8443 for site agents
+#   http://localhost:8090   BIMBA Setu console (Django superuser), https://localhost:8443 for site agents
 #   http://localhost:3080   BIMBA live UI
 #   http://localhost:8000   BIMBA REST + WS / Django admin (admin / admin)
 
@@ -16,9 +16,9 @@ x-django-env: &django-env                 # shared by django, django-mqtt, djang
   DB_USER: ${BIMBA_DB_USER:?set BIMBA_DB_USER in .env}
   DB_PASSWORD: ${BIMBA_DB_PASSWORD:?set BIMBA_DB_PASSWORD in .env}
   DB_SCHEMA: ${BIMBA_DB_SCHEMA:-bimba}
-  GATEWAY_DB_SCHEMA: ${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}   # migrated too (migrate_gateway_schema)
+  GATEWAY_DB_SCHEMA: ${BIMBA_SETU_DB_SCHEMA:-${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}}   # Setu's schema, migrated too (migrate_gateway_schema)
   INGEST_API_KEY: dev-ingest-key
-  PLUGIN_STATUS_URL: http://gateway:8090/system/bimba-status
+  PLUGIN_STATUS_URL: http://setu:8090/system/bimba-status
   MQTT_HOST: mqtt
   MQTT_TOPIC: bimba/v1/+/django
   DJANGO_ADMIN_USER: admin
@@ -40,9 +40,9 @@ services:
     restart: unless-stopped
 
   # ------------------------------------------------------------------ our SCADA edge server
-  gateway:                              # BIMBA Gateway: reads Modbus / OPC UA, delivers to Boomi / BIMBA Ingest / Kafka,
-    build: ./bimba-gateway              # registers BIMBA Site Agents. Replaces Ignition + the BIMBA IT/OT Agent module.
-    hostname: bimba-gateway
+  setu:                                 # BIMBA Setu: reads Modbus / OPC UA, delivers to Boomi / BIMBA Ingest / Kafka,
+    build: ./bimba-setu                 # registers BIMBA Site Agents. Replaces Ignition + the BIMBA IT/OT Agent module.
+    hostname: bimba-setu
     environment:
       BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-${BOOMI_ES_CONSUME_TOKEN:-}}
       BIMBA_DB_HOST: ${BIMBA_DB_HOST:-}
@@ -50,16 +50,16 @@ services:
       BIMBA_DB_NAME: ${BIMBA_DB_NAME:-bimba_chromalab}
       BIMBA_DB_USER: ${BIMBA_DB_USER:-}
       BIMBA_DB_PASSWORD: ${BIMBA_DB_PASSWORD:-}
-      BIMBA_DB_SCHEMA: ${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}   # the gateway's own schema (Django/Boomi: BIMBA_DB_SCHEMA)
+      BIMBA_DB_SCHEMA: ${BIMBA_SETU_DB_SCHEMA:-${BIMBA_GATEWAY_DB_SCHEMA:-bimba_ignition}}   # Setu's own schema (Django/Boomi: BIMBA_DB_SCHEMA)
       BIMBA_TLS_NAMES: ${BIMBA_TLS_NAMES:-}   # extra DNS names / IPs for the self-signed HTTPS certificate
       # production: the customer's HTTPS certificate (PEM cert + key, or a PFX) instead of the self-signed one;
-      # mount the files, e.g. ./gateway-tls:/tls:ro, and set BIMBA_TLS_CERT=/tls/gateway.crt BIMBA_TLS_KEY=/tls/gateway.key
+      # mount the files, e.g. ./setu-tls:/tls:ro, and set BIMBA_TLS_CERT=/tls/setu.crt BIMBA_TLS_KEY=/tls/setu.key
       BIMBA_TLS_CERT: ${BIMBA_TLS_CERT:-}
       BIMBA_TLS_KEY: ${BIMBA_TLS_KEY:-}
       BIMBA_TLS_PFX: ${BIMBA_TLS_PFX:-}
       BIMBA_TLS_PFX_PASSWORD: ${BIMBA_TLS_PFX_PASSWORD:-}
       BIMBA_SECRET_KEY: ${BIMBA_SECRET_KEY:-} # encrypts destination secrets in the database; empty = key in /data/secret.key
-      # "Forgot password?" e-mails. Without BIMBA_SMTP_HOST the reset link is written to the gateway log instead.
+      # "Forgot password?" e-mails. Without BIMBA_SMTP_HOST the reset link is written to the Setu log instead.
       BIMBA_PUBLIC_URL: ${BIMBA_PUBLIC_URL:-http://localhost:8090}   # console address used in e-mailed links
       BIMBA_SMTP_HOST: ${BIMBA_SMTP_HOST:-}
       BIMBA_SMTP_PORT: ${BIMBA_SMTP_PORT:-587}
@@ -71,7 +71,7 @@ services:
       BIMBA_MAIL_FROM: ${BIMBA_MAIL_FROM:-}
     volumes:
       - ./ignition/bimba:/config            # config.json, demo-tags.json (tag tree), console-sources.json (devices)
-      - gateway-data:/data                  # disk buffer, HTTPS key store, secret.key, saved destination list
+      - setu-data:/data                     # disk buffer, HTTPS key store, secret.key, saved destination list
       - ./site-agent/dist:/installers:ro    # BIMBA-Site-Agent-Setup.exe for "Download installer" (scripts/build-site-agent.ps1)
     ports: ["8090:8090", "8443:8443"]
     depends_on: [plc-sim, opcua-sim]
@@ -94,7 +94,7 @@ services:
       <<: *django-env
       # OT/IT Bridge Console (/console): edits the plugin's config.json + demo-tags.json in this folder
       BIMBA_CONFIG_DIR: /bimba-config
-      # Event Streams "Test connection" resolves ${BOOMI_ES_PRODUCE_TOKEN} like the gateway does
+      # Event Streams "Test connection" resolves ${BOOMI_ES_PRODUCE_TOKEN} like Setu does
       BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-${BOOMI_ES_CONSUME_TOKEN:-}}
     volumes:
       - ./ignition/bimba:/bimba-config
@@ -202,7 +202,7 @@ services:
 
 volumes:
   test-scada-disk:
-  gateway-data:
+  setu-data:
   kafka-data:
   es-spool:
   mqtt-data:

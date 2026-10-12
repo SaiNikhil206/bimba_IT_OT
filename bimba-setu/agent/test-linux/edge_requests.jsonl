@@ -1,0 +1,8 @@
+{"op":"test","id":"dnp3-test","source":{"kind":"dnp3","settings":{"host":"dnp3-sim","port":20000,"outstation":10,"master":1}},"tags":[{"name":"ai0","address":"AI0"},{"name":"ai1","address":"AI1"},{"name":"ai2","address":"AI2"},{"name":"bi0","address":"BI0"},{"name":"bi1","address":"BI1"},{"name":"ct0","address":"CT0"},{"name":"ao0","address":"AO0"},{"name":"nope","address":"AI99"}]}
+{"op":"browse","id":"dnp3-browse","source":{"kind":"dnp3","settings":{"host":"dnp3-sim","outstation":10,"master":1}}}
+{"op":"browse","id":"dnp3-browse-ai","source":{"kind":"dnp3","settings":{"host":"dnp3-sim","outstation":10,"master":1}},"nodeId":"AI","limit":5}
+{"op":"test","id":"dnp3-wrong-outstation","source":{"kind":"dnp3","settings":{"host":"dnp3-sim","outstation":11,"master":1,"timeoutMs":1500}},"tags":[{"name":"ai0","address":"AI0"}]}
+{"op":"test","id":"iec104-test","source":{"kind":"iec104","settings":{"host":"iec104-sim","commonAddress":1}},"tags":[{"name":"t","address":"4001"},{"name":"scaled","address":"4002"},{"name":"norm","address":"4003"},{"name":"timed","address":"4004"},{"name":"sp","address":"100"},{"name":"sp_on","address":"101"},{"name":"dp","address":"200"},{"name":"total","address":"300"},{"name":"other","address":"2/4001"},{"name":"nope","address":"9999"}]}
+{"op":"browse","id":"iec104-browse","source":{"kind":"iec104","settings":{"host":"iec104-sim"}}}
+{"op":"browse","id":"iec104-browse-me","source":{"kind":"iec104","settings":{"host":"iec104-sim"}},"nodeId":"ME"}
+{"op":"test","id":"iec104-refused","source":{"kind":"iec104","settings":{"host":"iec104-sim","port":2405,"timeoutMs":1500}},"tags":[]}
