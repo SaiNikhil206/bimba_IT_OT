@@ -10,6 +10,7 @@ import Destinations from "./pages/Destinations.jsx";
 import Quarantine from "./pages/Quarantine.jsx";
 import Registry from "./pages/Registry.jsx";
 import Agents from "./pages/Agents.jsx";
+import Tokens from "./pages/Tokens.jsx";
 import Users from "./pages/Users.jsx";
 import Roles from "./pages/Roles.jsx";
 import Audit from "./pages/Audit.jsx";
@@ -34,6 +35,7 @@ const PAGES = [
   { path: "/quarantine", label: "Quarantine", icon: "⊘", perm: ["gateway.view"], group: "Delivery", element: <Quarantine /> },
   { path: "/users", records: true, label: "Users", icon: "◉", perm: ["users.manage"], group: "Administration", element: <Users /> },
   { path: "/roles", records: true, label: "Roles", icon: "◆", perm: ["roles.manage", "users.manage"], group: "Administration", element: <Roles /> },
+  { path: "/tokens", label: "Enrollment tokens", icon: "⚿", perm: ["agents.manage"], group: "Administration", element: <Tokens /> },
   { path: "/audit", label: "Audit log", icon: "≡", perm: ["audit.view"], group: "Administration", element: <Audit /> },
   { path: "/organizations", records: true, label: "Organizations", icon: "▦", platform: true, group: "Platform", element: <Organizations /> },
 ];

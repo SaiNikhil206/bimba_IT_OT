@@ -1,0 +1,326 @@
+{
+  "//": [
+    "Data source types of the site agents: the console builds the Add data source form from this file and Setu checks the",
+    "saved settings against it (SourceKinds). A new setting or type is added here; only checks that need code (cross-field",
+    "rules, SQL query, OPC UA devices) live in AgentSources.",
+    "field: key, label, type text|number|select|choice|checkbox|password|textarea|timezone|certPin|note, default, required,",
+    "  min, max, maxLength, pattern (+ ignoreCase), message (the error), placeholder, placeholderBy {field, values}, hint",
+    "  ({computer} = the agent's computer) or hintBy {field, values}, text + noteKind (note), mono, span (full width), advanced (under Advanced settings), rows, options",
+    "  [{value, label, hint, set: {other field: value}}], showIf / disabledIf (condition or list of conditions, all must hold:",
+    "  {field, in: [...]} | {field, notIn: [...]} | {field, matches: regex}), dropWhenHidden (removed when not shown),",
+    "  clearsOnCopy (fields emptied when a duplicate changes it), suggest (agent discovery list), examples {by, values}.",
+    "kind: id, label, menu, needs (first agent version), platforms, pollMs, perDevice, browse {button, title, root, waiting},",
+    "  test {button, readsTags}, tags {address | addressBy, hint | hintBy, newAddress}, summary [{if, text}] ({key|default},",
+    "  {key@} = the option's label, [..] left out when a value in it is empty), scan {ports} (network scan), fields."
+  ],
+  "kinds": [
+    {
+      "id": "opcua",
+      "label": "OPC UA",
+      "menu": "OPC UA",
+      "pollMs": 1000,
+      "perDevice": true,
+      "browse": { "button": "Browse the server…", "title": "Browse the OPC UA server", "root": "Objects", "waiting": "Asking the agent…" },
+      "test": { "button": "Test connection", "readsTags": false },
+      "tags": { "address": "Node id", "hint": "Browse the server and tick the tags to collect." },
+      "summary": [{ "text": "{endpoint}" }],
+      "scan": { "ports": [4840, 4841, 48010, 49320, 53530, 62541] },
+      "fields": [
+        { "key": "endpoint", "label": "Endpoint", "type": "text", "mono": true, "span": true, "required": true,
+          "default": "opc.tcp://localhost:4840", "placeholder": "opc.tcp://localhost:4840", "maxLength": 300,
+          "pattern": "^\\s*opc\\.tcp://\\S+", "message": "Endpoint: an address like opc.tcp://localhost:62541.",
+          "clearsOnCopy": ["serverCert"],
+          "hint": "Seen from the computer: localhost = the SCADA server on {computer} itself. Any OPC UA server works (SCADA, HMI, OPC server, PLC); the endpoint is in its OPC UA settings." },
+        { "key": "auth", "label": "Sign-in", "type": "select", "default": "Anonymous",
+          "options": [{ "value": "Anonymous", "label": "Anonymous" }, { "value": "Username", "label": "User name + password" }] },
+        { "key": "username", "label": "User name", "type": "text", "maxLength": 200, "required": true,
+          "message": "Enter the OPC UA user name.", "showIf": { "field": "auth", "in": ["Username"] } },
+        { "key": "password", "label": "Password", "type": "password", "showIf": { "field": "auth", "in": ["Username"] },
+          "hint": "Stored encrypted on Setu; sent only to this agent." },
+        { "key": "policy", "label": "Security", "type": "select", "default": "Auto", "advanced": true,
+          "options": [
+            { "value": "Auto", "label": "Strongest the server offers" },
+            { "value": "None", "label": "No security (the server must allow it)" },
+            { "value": "Basic256Sha256", "label": "Basic256Sha256" },
+            { "value": "Aes128_Sha256_RsaOaep", "label": "Aes128-Sha256-RsaOaep" },
+            { "value": "Aes256_Sha256_RsaPss", "label": "Aes256-Sha256-RsaPss" }
+          ] },
+        { "key": "mode", "label": "Message security", "type": "select", "default": "Auto", "advanced": true,
+          "disabledIf": { "field": "policy", "in": ["None"] },
+          "options": [
+            { "value": "Auto", "label": "Sign and encrypt if offered" },
+            { "value": "SignAndEncrypt", "label": "Sign and encrypt" },
+            { "value": "Sign", "label": "Sign only" }
+          ] },
+        { "key": "serverCert", "label": "Server certificate", "type": "certPin", "span": true, "advanced": true }
+      ]
+    },
+    {
+      "id": "modbus",
+      "label": "Modbus TCP",
+      "menu": "Modbus TCP",
+      "pollMs": 1000,
+      "test": { "button": "Test connection (read tags)", "readsTags": true },
+      "tags": { "address": "Address", "newAddress": "HR1", "hint": "Add the registers to read: HR1 (holding register), IR5, C3 (coil), DI2." },
+      "summary": [{ "text": "{host}:{port|502} unit {unitId|1}" }],
+      "scan": { "ports": [502] },
+      "fields": [
+        { "key": "host", "label": "PLC host / IP", "type": "text", "required": true, "default": "localhost", "maxLength": 255,
+          "placeholder": "192.168.10.20", "message": "Enter the PLC's host name or IP address.", "hint": "Seen from {computer}." },
+        { "key": "unitId", "label": "Unit id", "type": "number", "default": 1, "min": 0, "max": 255,
+          "hint": "1 for most PLCs; the device's id behind a gateway." },
+        { "key": "port", "label": "Port", "type": "number", "default": 502, "min": 1, "max": 65535, "advanced": true },
+        { "key": "zeroBased", "label": "Addresses start at 0", "type": "checkbox", "default": false, "advanced": true,
+          "hint": "On: HR0 is the first register. Off: HR1 is (the usual Modbus numbering)." }
+      ]
+    },
+    {
+      "id": "mqtt",
+      "label": "MQTT",
+      "menu": "MQTT / Sparkplug B",
+      "needs": "1.6",
+      "pollMs": 1000,
+      "browse": { "button": "Browse the broker…", "title": "Browse the MQTT broker", "root": "Broker", "waiting": "The agent listens to the broker for a few seconds…" },
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": {
+        "addressBy": { "field": "payload", "values": { "value": "Topic", "json": "Topic#field", "sparkplug": "Group/node#metric" } },
+        "hint": "Browse the broker (the agent listens for a few seconds) and tick the values, or add them by address."
+      },
+      "summary": [{ "if": { "field": "payload", "in": ["json", "sparkplug"] }, "text": "{url} ({payload})" }, { "text": "{url}" }],
+      "scan": { "ports": [1883, 8883] },
+      "fields": [
+        { "key": "url", "label": "Broker", "type": "text", "mono": true, "span": true, "required": true,
+          "default": "mqtt://localhost:1883", "placeholder": "mqtt://broker:1883", "maxLength": 300, "ignoreCase": true,
+          "pattern": "^\\s*((tcp|ssl|mqtt|mqtts|ws|wss)://)?[^\\s/?#@]+(:\\d{1,5})?(/\\S*)?\\s*$",
+          "message": "Broker: an address like mqtt://broker:1883 or mqtts://broker:8883.",
+          "hint": "Seen from {computer}: mqtt://host:1883, mqtts://host:8883 (TLS), ws:// or wss:// for MQTT over WebSocket. The agent only subscribes." },
+        { "key": "payload", "label": "Messages", "type": "select", "default": "value", "required": true,
+          "message": "Messages: value, json or sparkplug.",
+          "options": [
+            { "value": "value", "label": "One value per topic", "hint": "Tags: the topic, e.g. plant/line1/temperature; the message is the value (21.5, true, text)." },
+            { "value": "json", "label": "JSON (pick fields)", "hint": "Tags: topic#field, e.g. plant/line1/status#motor.speed (arrays: items[0])." },
+            { "value": "sparkplug", "label": "Sparkplug B", "hint": "Tags: group/edge node[/device]#metric, e.g. Plant1/Line1/Press3#Pressure." }
+          ] },
+        { "key": "username", "label": "User name", "type": "text", "maxLength": 200, "placeholder": "none" },
+        { "key": "password", "label": "Password", "type": "password", "hint": "Stored encrypted on Setu; sent only to this agent." },
+        { "key": "qos", "label": "QoS", "type": "select", "default": 1, "advanced": true, "message": "QoS: 0 or 1.",
+          "options": [{ "value": 1, "label": "1 · at least once" }, { "value": 0, "label": "0 · at most once" }] },
+        { "key": "staleSeconds", "label": "Stale after (s)", "type": "number", "default": 0, "min": 0, "max": 86400, "advanced": true,
+          "message": "Stale after: 0 (never) to 86400 seconds.",
+          "hint": "0 = never. Otherwise a value without updates for that long is sent as UNCERTAIN." },
+        { "key": "clientId", "label": "Client id (optional)", "type": "text", "mono": true, "maxLength": 64, "advanced": true,
+          "placeholder": "automatic", "pattern": "^[A-Za-z0-9._-]*$",
+          "message": "Client id: up to 64 letters, digits, '.', '_' or '-' (empty = automatic)." },
+        { "key": "caCert", "label": "Broker CA certificate (optional)", "type": "textarea", "rows": 3, "mono": true, "span": true,
+          "advanced": true, "maxLength": 20000, "placeholder": "-----BEGIN CERTIFICATE-----",
+          "showIf": { "field": "url", "matches": "^\\s*(mqtts|ssl|wss):" },
+          "hint": "Only for a private CA; otherwise the computer's trusted certificates are used." },
+        { "key": "rebirth", "label": "Ask edge nodes to republish their metrics (Sparkplug rebirth) when the agent has not seen their birth",
+          "type": "checkbox", "default": false, "span": true, "advanced": true, "showIf": { "field": "payload", "in": ["sparkplug"] },
+          "hint": "This sends a command (NCMD) to the edge node; off = read only, values appear as the edge nodes publish them." }
+      ]
+    },
+    {
+      "id": "s7",
+      "label": "Siemens S7",
+      "menu": "Siemens S7 (S7-300/400/1200/1500, LOGO!)",
+      "needs": "1.6",
+      "pollMs": 1000,
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": { "address": "Address", "newAddress": "DB1.DBD0",
+        "hint": "Add the addresses to read: DB1.DBD0 (REAL), DB1.DBW4 (INT), DB1.DBX8.0 (BOOL), MW10, M0.1, IW64, Q0.1; add :DINT, :WORD, :STRING[20] for another type." },
+      "summary": [{ "if": { "field": "cpu", "in": ["LOGO"] }, "text": "LOGO! {host}" }, { "text": "{cpu@} {host} rack {rack|0} slot {slot|1}" }],
+      "scan": { "ports": [102] },
+      "fields": [
+        { "key": "host", "label": "PLC address", "type": "text", "mono": true, "required": true, "maxLength": 255,
+          "placeholder": "192.168.0.10", "pattern": "^\\s*[A-Za-z0-9.:\\[\\]_-]+\\s*$", "message": "Enter the PLC's host name or IP address.",
+          "hint": "Host name or IP address, seen from {computer}." },
+        { "key": "cpu", "label": "CPU", "type": "select", "default": "S7_1500",
+          "message": "CPU: S7_300, S7_400, S7_1200, S7_1500 or LOGO.",
+          "options": [
+            { "value": "S7_1500", "label": "S7-1500", "set": { "slot": 1 } },
+            { "value": "S7_1200", "label": "S7-1200", "set": { "slot": 1 } },
+            { "value": "S7_300", "label": "S7-300", "set": { "slot": 2 } },
+            { "value": "S7_400", "label": "S7-400", "set": { "slot": 1 } },
+            { "value": "LOGO", "label": "LOGO! 8", "set": { "slot": 0 } }
+          ] },
+        { "key": "warn1200", "type": "note", "noteKind": "warn", "span": true, "showIf": { "field": "cpu", "in": ["S7_1200", "S7_1500"] },
+          "text": "In TIA Portal: allow PUT/GET communication in the CPU's protection settings, and turn off optimized block access on the data blocks read." },
+        { "key": "rack", "label": "Rack", "type": "number", "default": 0, "min": 0, "max": 7, "advanced": true,
+          "showIf": { "field": "cpu", "notIn": ["LOGO"] } },
+        { "key": "slot", "label": "Slot", "type": "number", "default": 1, "min": 0, "max": 31, "advanced": true,
+          "showIf": { "field": "cpu", "notIn": ["LOGO"] }, "hint": "S7-300: 2, S7-400: see hardware config, S7-1200/1500: 1." },
+        { "key": "port", "label": "Port", "type": "number", "default": 102, "min": 1, "max": 65535, "advanced": true }
+      ]
+    },
+    {
+      "id": "eip",
+      "label": "EtherNet/IP",
+      "menu": "Allen-Bradley Logix (EtherNet/IP)",
+      "needs": "1.6",
+      "pollMs": 1000,
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": { "address": "Tag", "hint": "Add controller tags by name: Line1_Speed, Motor.Speed (UDT member), Levels[3] (array element), Program:Main.Count." },
+      "summary": [{ "text": "Logix {host} slot {slot|0}" }],
+      "scan": { "ports": [44818] },
+      "fields": [
+        { "key": "host", "label": "PLC address", "type": "text", "mono": true, "required": true, "maxLength": 255,
+          "placeholder": "192.168.0.10", "pattern": "^\\s*[A-Za-z0-9.:\\[\\]_-]+\\s*$", "message": "Enter the PLC's host name or IP address.",
+          "hint": "Host name or IP address, seen from {computer}." },
+        { "key": "slot", "label": "CPU slot", "type": "number", "default": 0, "min": 0, "max": 31,
+          "hint": "The slot of the controller in the chassis (0 for CompactLogix)." },
+        { "key": "backplane", "label": "Backplane port", "type": "number", "default": 1, "min": -1, "max": 31, "advanced": true,
+          "hint": "1 for ControlLogix / CompactLogix; -1 for a controller addressed directly (no routing)." },
+        { "key": "port", "label": "Port", "type": "number", "default": 44818, "min": 1, "max": 65535, "advanced": true }
+      ]
+    },
+    {
+      "id": "dnp3",
+      "label": "DNP3",
+      "menu": "DNP3 outstation (RTU / IED)",
+      "needs": "1.7",
+      "pollMs": 1000,
+      "browse": { "button": "Browse the outstation…", "title": "Browse the DNP3 outstation", "root": "Outstation", "waiting": "The agent reads the outstation's points (Class 0)…" },
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": { "address": "Point", "newAddress": "AI0",
+        "hint": "Browse the outstation, or add points: AI5 (analog input), BI3 (binary input), DBI2 (double-bit), BO1, AO2 (output status), CT4 (counter), FC4 (frozen counter)." },
+      "summary": [{ "text": "DNP3 {host}:{port|20000} outstation {outstation|10}" }],
+      "scan": { "ports": [20000] },
+      "fields": [
+        { "key": "host", "label": "Outstation host / IP", "type": "text", "mono": true, "required": true, "maxLength": 255,
+          "placeholder": "192.168.0.30", "pattern": "^\\s*[A-Za-z0-9.:\\[\\]_-]+\\s*$", "message": "Enter the outstation's host name or IP address.",
+          "hint": "The RTU, IED or protocol gateway, seen from {computer}." },
+        { "key": "outstation", "label": "Outstation address", "type": "number", "default": 10, "min": 0, "max": 65519,
+          "message": "Outstation address: 0–65519.", "hint": "The outstation's DNP3 address." },
+        { "key": "master", "label": "Master address", "type": "number", "default": 1, "min": 0, "max": 65519,
+          "message": "Master address: 0–65519.", "hint": "The agent's own DNP3 address: one the SCADA master does not use, allowed on the outstation." },
+        { "key": "port", "label": "Port", "type": "number", "default": 20000, "min": 1, "max": 65535, "advanced": true, "message": "Port: 1–65535." },
+        { "key": "readOnly", "type": "note", "span": true,
+          "text": "Read only: every read is a Class 0 poll (the current value of every point). Events are never read, so they stay for the SCADA master." }
+      ]
+    },
+    {
+      "id": "iec104",
+      "label": "IEC 104",
+      "menu": "IEC 60870-5-104 outstation",
+      "needs": "1.7",
+      "pollMs": 1000,
+      "browse": { "button": "Browse the outstation…", "title": "Browse the IEC 104 outstation", "root": "Outstation", "waiting": "The agent reads all values (general interrogation)…" },
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": { "address": "IOA", "hint": "Browse the outstation (the agent reads all values once), or add information object addresses: 4001, or 2/4001 for common address 2." },
+      "summary": [{ "text": "IEC 104 {host}:{port|2404} CA {commonAddress|1}" }],
+      "scan": { "ports": [2404] },
+      "fields": [
+        { "key": "host", "label": "Outstation host / IP", "type": "text", "mono": true, "required": true, "maxLength": 255,
+          "placeholder": "192.168.0.30", "pattern": "^\\s*[A-Za-z0-9.:\\[\\]_-]+\\s*$", "message": "Enter the outstation's host name or IP address.",
+          "hint": "The RTU, IED or protocol gateway, seen from {computer}." },
+        { "key": "commonAddress", "label": "Common address", "type": "number", "default": 1, "min": 1, "max": 65534,
+          "message": "Common address: 1–65534.", "hint": "The station's ASDU address. A tag can name another one: 2/4001." },
+        { "key": "port", "label": "Port", "type": "number", "default": 2404, "min": 1, "max": 65535, "advanced": true, "message": "Port: 1–65535." },
+        { "key": "giMinutes", "label": "Read all values again", "type": "select", "default": 15, "advanced": true,
+          "message": "General interrogation: every 0 (only after connecting) to 1440 minutes.",
+          "hint": "A general interrogation. In between, changes arrive as the outstation sends them.",
+          "options": [
+            { "value": 0, "label": "Only after connecting" }, { "value": 5, "label": "Every 5 min" }, { "value": 15, "label": "Every 15 min" },
+            { "value": 60, "label": "Every 1 h" }, { "value": 240, "label": "Every 4 h" }, { "value": 1440, "label": "Every 24 h" }
+          ] },
+        { "key": "timeZone", "label": "Time zone of time tags", "type": "timezone", "advanced": true, "placeholder": "UTC",
+          "hint": "The outstation's clock, e.g. UTC or Europe/Berlin." },
+        { "key": "readOnly", "type": "note", "span": true,
+          "text": "Read only: no commands besides the general interrogation, no clock setting. The outstation must accept one more connection." }
+      ]
+    },
+    {
+      "id": "sql",
+      "label": "SQL / historian",
+      "menu": "SQL database / historian",
+      "needs": "1.7",
+      "pollMs": 10000,
+      "browse": { "button": "Browse the result…", "title": "Browse the query's result", "root": "Result", "waiting": "The agent runs the query…" },
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": {
+        "addressBy": { "field": "layout", "values": { "rows": "Tag in the database", "columns": "Column" } },
+        "hintBy": { "field": "layout", "values": { "rows": "Browse the result, or add tags by their name in the tag column.", "columns": "Browse the result, or add tags by column name." } }
+      },
+      "summary": [{ "text": "{engine@} {host}[\\{instance}][/{database}]" }],
+      "scan": { "ports": [1433, 5432, 3306] },
+      "fields": [
+        { "key": "engine", "label": "Database", "type": "select", "default": "sqlserver", "required": true,
+          "message": "Database: sqlserver, postgresql or mysql.", "hint": "AVEVA (Wonderware) Historian and WinCC use SQL Server.",
+          "options": [
+            { "value": "sqlserver", "label": "SQL Server", "set": { "port": "" } },
+            { "value": "postgresql", "label": "PostgreSQL", "set": { "port": "", "instance": "" } },
+            { "value": "mysql", "label": "MySQL / MariaDB", "set": { "port": "", "instance": "" } }
+          ] },
+        { "key": "host", "label": "Server", "type": "text", "mono": true, "required": true, "default": "localhost", "maxLength": 255,
+          "placeholder": "historian01", "message": "Enter the database server's host name or IP address.",
+          "hint": "Host name or IP address, seen from {computer}." },
+        { "key": "instance", "label": "Instance (optional)", "type": "text", "mono": true, "maxLength": 16, "placeholder": "default instance",
+          "showIf": { "field": "engine", "in": ["sqlserver"] }, "dropWhenHidden": true,
+          "hint": "e.g. SQLEXPRESS or WINCC. Without a port, the SQL Server Browser finds it." },
+        { "key": "database", "label": "Database name", "type": "text", "mono": true, "maxLength": 128, "placeholder": "e.g. Runtime" },
+        { "key": "username", "label": "User name", "type": "text", "maxLength": 128, "message": "User name: at most 128 characters." },
+        { "key": "password", "label": "Password", "type": "password", "hint": "Stored encrypted on Setu; sent only to this agent." },
+        { "key": "readOnly", "type": "note", "span": true,
+          "text": "Use a database login that can only read (for example db_datareader). The agent runs only reading queries." },
+        { "key": "layout", "label": "Result", "type": "choice", "default": "rows", "span": true, "required": true,
+          "message": "Result: rows (one row per tag) or columns (one column per tag).",
+          "options": [
+            { "value": "rows", "label": "One row per tag", "hint": "Columns tag and value, optionally time and quality." },
+            { "value": "columns", "label": "One column per tag", "hint": "One row; each tag is a column. A column time is the row's time." }
+          ] },
+        { "key": "query", "label": "Query", "type": "textarea", "rows": 4, "mono": true, "span": true, "required": true,
+          "hintBy": { "field": "layout", "values": {
+            "rows": "Name the columns with AS: tag, value, and optionally time and quality. {tags} becomes the tags below.",
+            "columns": "The first row is read; each tag below is a column name." } },
+          "examples": { "by": ["engine", "layout"], "values": {
+            "sqlserver": {
+              "rows": "SELECT TagName AS tag, Value AS value, DateTime AS time, OPCQuality AS quality\nFROM Runtime.dbo.Live\nWHERE TagName IN ({tags})",
+              "columns": "SELECT TOP 1 *\nFROM dbo.LineData\nORDER BY [time] DESC" },
+            "postgresql": {
+              "rows": "SELECT tag_name AS tag, value, ts AS time\nFROM readings_latest\nWHERE tag_name IN ({tags})",
+              "columns": "SELECT *\nFROM line_data\nORDER BY time DESC\nLIMIT 1" },
+            "mysql": {
+              "rows": "SELECT tag_name AS tag, value, ts AS time\nFROM readings_latest\nWHERE tag_name IN ({tags})",
+              "columns": "SELECT *\nFROM line_data\nORDER BY time DESC\nLIMIT 1" } } } },
+        { "key": "port", "label": "Port", "type": "number", "min": 1, "max": 65535, "advanced": true, "message": "Port: 1–65535.",
+          "placeholderBy": { "field": "engine", "values": { "sqlserver": "1433 (automatic with an instance)", "postgresql": "5432", "mysql": "3306" } } },
+        { "key": "tls", "label": "Encryption", "type": "select", "default": "off", "advanced": true,
+          "message": "Encryption: off, trust or verify.",
+          "options": [
+            { "value": "off", "label": "Off" },
+            { "value": "trust", "label": "Encrypted (certificate not checked)" },
+            { "value": "verify", "label": "Encrypted and verified" }
+          ] },
+        { "key": "timeZone", "label": "Time zone of the times", "type": "timezone", "advanced": true, "placeholder": "UTC",
+          "hint": "For times stored without a zone (SQL Server datetime): the database server's, e.g. Europe/Berlin." },
+        { "key": "staleSeconds", "label": "Stale after (s)", "type": "number", "default": 0, "min": 0, "max": 2678400, "advanced": true,
+          "message": "Stale after: 0 (never) to 2678400 seconds.", "hint": "0 = never. Otherwise a value whose time is older is sent as UNCERTAIN." },
+        { "key": "timeoutMs", "label": "Timeout (ms)", "type": "number", "min": 1000, "max": 300000, "advanced": true, "placeholder": "10000",
+          "message": "Timeout: 1000–300000 ms.", "hint": "How long one query may take." }
+      ]
+    },
+    {
+      "id": "opcda",
+      "label": "OPC DA",
+      "menu": "OPC DA (classic)",
+      "needs": "1.6",
+      "platforms": ["windows"],
+      "pollMs": 1000,
+      "browse": { "button": "Browse the server…", "title": "Browse the OPC DA server", "root": "Server", "waiting": "Asking the agent…" },
+      "test": { "button": "Test connection", "readsTags": true },
+      "tags": { "address": "Item id", "hint": "Browse the server and tick the items to collect, or add item ids such as Channel1.Device1.Tag1." },
+      "summary": [{ "text": "{progId}[ on {host}]" }],
+      "fields": [
+        { "key": "progId", "label": "OPC DA server", "type": "text", "mono": true, "span": true, "required": true, "maxLength": 200,
+          "placeholder": "Kepware.KEPServerEX.V6", "suggest": "opcda", "message": "Choose the OPC DA server (ProgID, e.g. OPCLabs.KitServer.2).",
+          "hint": "The server's ProgID (or {CLSID}). Servers installed on {computer} are suggested." },
+        { "key": "host", "label": "On computer", "type": "text", "maxLength": 255, "placeholder": "this computer", "advanced": true,
+          "hint": "Empty = {computer} itself (recommended). Another computer works over DCOM if it allows it." },
+        { "key": "readFrom", "label": "Read from", "type": "select", "default": "cache", "advanced": true,
+          "hint": "The cache is refreshed by the server at the read rate below; device reads load the PLC network.",
+          "options": [{ "value": "cache", "label": "Server cache (recommended)" }, { "value": "device", "label": "Device on every read" }] }
+      ]
+    }
+  ]
+}

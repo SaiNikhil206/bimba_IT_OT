@@ -62,8 +62,27 @@ in BIMBA Operations → **Site agents → Install on a machine**.
 
 ## Install on a machine
 
-**Download** both installers from the Setu console: **Site agents → Download installer** (permission `agents.view`).
-Enrollment tokens are created on the same page (**Enrollment tokens → New token**, permission `agents.manage`; shown once).
+In the Setu console: **Site agents → Add a computer** (permission `agents.view`). It walks through four steps: the
+computer (Windows or Linux / Raspberry Pi, kind of package), the Setu address it uses, how it registers, then the
+download and install command. **Copy token** (permission `agents.manage`) makes a *one-time* token: it registers one
+computer and expires after 3 minutes (`POST /api/gw/agents/tokens/one-time`, `EnrollTokens.ONE_TIME_MINUTES`). It is
+put on the clipboard and into the commands, a countdown shows how long it still works, and the dialog says when a
+computer has registered with it (then **Copy a token for another computer**) or that it expired (**Copy a new token**).
+Copy it when the installer asks for it: on Linux, install the package first, then copy the token and run the register
+command. Signature, certificate and checksum are under *More ways to install, and technical details*.
+
+Named tokens for roll-outs to many computers (MSI, apt with `BIMBA_ENROLL_TOKEN`, a prepared image) are under
+**Administration → Enrollment tokens** (permission `agents.manage`): New token (name, valid days, maximum computers;
+shown once), revoke, and Active / All (one-time, expired and used-up tokens are under All).
+
+The Site agents page leads with one verdict (all computers online, or which ones are not reporting); removed agents
+are under **Removed**. Filters: search, Status (online / not reporting), Computer (Windows / Linux), Site, Data; click a
+column header to sort (Status = not reporting first). An agent's Data sources can be filtered by type and status
+(needs attention, starting, collecting, paused) and sorted by any column; Live data by data source and quality
+(not good only), machines sorted A–Z, Z–A, problems first or by data source, tags by any column. Sorting and filters
+are remembered while the browser tab is open. One agent's page: a verdict with the next step, then **Data sources** (what it reads, Scan the
+network), **Live data** (each machine with the last value of its tags) and **Computer** (where it runs, and
+**Remove agent**, which revokes its registration and certificate; permission `agents.manage`).
 They run on Windows 10/11 and Server 2016+ (.NET Framework 4.8, built in).
 
 **Wizard** (`BIMBA-Site-Agent-Setup.exe`): double-click → approve the administrator prompt → Setu address → enrollment
@@ -131,6 +150,38 @@ machine. **Test connection** and **Browse** run on the agent's computer. Every s
 Every numeric tag can be **scaled** (raw low–high → scaled low–high, e.g. counts 0–32767 → 0–100 %), converted to
 another unit and checked against an engineering range (outside = UNCERTAIN), whatever the protocol.
 
+**The form comes from Setu.** Each type's settings are described once, in
+`bimba-setu/src/main/resources/source-kinds.json`: label, kind of input, default, range, pattern, hint, when it is
+shown (`showIf`), whether it sits under **Advanced settings**, plus the type's tag column, Browse button and the
+one-line summary in the list. The console builds the Add data source form from it (`GET /api/gw/agents/source-kinds`)
+and Setu checks every save against the same list (`SourceKinds`), so a new setting is added in that file only. Only
+rules a list cannot express stay in code (`AgentSources.validateSettings`): OPC UA devices, the MQTT CA certificate,
+DNP3 master ≠ outstation, the SQL server, names and query. The main fields show first; Advanced settings (ports,
+timeouts, security details, time zones) opens by itself when one of them differs from its default or Setu refused one.
+
+### Scan the network
+
+**Site agents → agent → Data sources → Scan the network** (permission `agents.manage`, agent 1.8 or later; every scan is
+in the audit log as `agent.netscan`). The agent looks for data sources it can reach:
+
+1. It tries one TCP connection to the standard ports of the chosen types (from `source-kinds.json`: OPC UA 4840, 4841,
+   48010, 49320, 53530, 62541 · Modbus 502 · MQTT 1883, 8883 · S7 102 · EtherNet/IP 44818 · DNP3 20000 · IEC 104 2404 ·
+   SQL 1433, 5432, 3306) on every address of the computer's own networks (each at most the /24 around its address, plus
+   localhost) and of the networks or addresses typed in (`/22` to `/32`, host names, `host:port` for a device on
+   another port, which is then asked as every chosen type). At most 1,024 addresses; 256 attempts at a time, about
+   10–30 s in all.
+2. Each open port is asked what it is, with requests that only read: Modbus Read Device Identification (unit 1),
+   OPC UA GetEndpoints (name, path, security, anonymous sign-in), an S7 connection on rack 0 slot 1 / 2 / LOGO!,
+   EtherNet/IP ListIdentity (product name, revision), DNP3 link status to the self address (outstations that support it
+   give their address), IEC 104 TESTFR, MQTT CONNECT + DISCONNECT, MySQL / MariaDB greeting, PostgreSQL SSLRequest,
+   SQL Server PRELOGIN (version). Nothing is written and no session stays open.
+3. **Found on the network** lists what answered (an open port that did not say what it is is shown as such) with
+   **Add**: the form opens with the type, address, port and what the device told (OPC UA endpoint and sign-in, S7 CPU,
+   DNP3 outstation address, SQL engine). Sources already added show **in use**.
+
+A scan touches every address of a plant network: some sites forbid scans or watch for them, so check with the network or
+OT team first. Windows agents get the scan with the next Windows installer build (its edge collector is the same Java code).
+
 **DNP3** (outstation over TCP, default port 20000). Settings: outstation address, and the agent's own **master
 address**: one the SCADA master does not use, allowed on the outstation (most RTUs accept several masters, often each on
 its own port). Each read is a Class 0 poll, the current value of every point. Events are never read, so the
@@ -166,6 +217,11 @@ Test outstations and databases for all of these: `bimba-setu/agent/test-linux` (
 `iec104_sim.py` uses lib60870, `sql_seed.sh` fills SQL Server, PostgreSQL and MariaDB containers; `utility_check.py` runs
 the console requests against them).
 
+**Linux test computer:** `docker compose --profile test-linux up -d --build test-linux` starts a clean Debian 12 with
+systemd on the same Docker network as Setu and the simulators, with `site-agent/dist` at `/dist`. Then
+`docker compose exec test-linux bash`, `apt-get update && apt-get install -y /dist/bimba-site-agent_all.deb` and
+`bimba-site-agent install --server https://setu:8443 --token <token> --trust-cert <sha256>`.
+
 ## Setu configuration
 
 Works without changes: Setu reads the database from its `BIMBA_DB_*` environment
@@ -187,7 +243,7 @@ Works without changes: Setu reads the database from its `BIMBA_DB_*` environment
 where client certificates cannot reach it).
 
 Setu console (`http://<setu>:8090/` → **Site agents**) lists every organization's machines for users
-with the `agents.view` permission; `agents.manage` can revoke them (see [bimba-setu.md](bimba-setu.md)). The registry's DB health is in `/system/bimba-status` → `siteAgents`.
+with the `agents.view` permission; `agents.manage` can remove them (Computer tab → Remove agent) (see [bimba-setu.md](bimba-setu.md)). The registry's DB health is in `/system/bimba-status` → `siteAgents`.
 
 ## Not done yet
 * **Code-signing certificate**: the build signs with whatever is configured; release builds need the company's real

@@ -100,7 +100,7 @@ public final class EdgeMain {
             String op = EdgeEngine.str(msg, "op");
             switch (op == null ? "" : op) {
                 case "config" -> engine.configure(msg);
-                case "test", "browse", "scan", "read" -> work.execute(() -> command(op, msg));
+                case "test", "browse", "scan", "read", "netscan" -> work.execute(() -> command(op, msg));
                 case "stop" -> {
                     engine.stop();
                     System.exit(0);

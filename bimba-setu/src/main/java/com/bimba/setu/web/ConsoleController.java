@@ -290,6 +290,19 @@ public class ConsoleController {
         return t;
     }
 
+    /**
+     * Add a computer's Copy token: a token for one computer that expires after a few minutes, so a copied token cannot be
+     * reused later or by someone else. Roll-outs to many computers use a named token (Administration → Enrollment tokens).
+     */
+    @PostMapping("/agents/tokens/one-time")
+    @PreAuthorize("hasAuthority('agents.manage')")
+    Map<String, Object> oneTimeEnrollToken(@AuthenticationPrincipal Principal p, HttpServletRequest req) throws ApiException {
+        Map<String, Object> t = tokens.createOneTime(p.org(), p.userId(), p.username(), req.getRemoteAddr());
+        security.audit(p, "agent.token.create", EnrollTokens.ONE_TIME_LABEL, true, req.getRemoteAddr(),
+                Map.of("tokenId", t.get("id"), "prefix", t.get("prefix"), "minutes", EnrollTokens.ONE_TIME_MINUTES));
+        return t;
+    }
+
     @PostMapping("/agents/tokens/{id}/revoke")
     @PreAuthorize("hasAuthority('agents.manage')")
     Map<String, Object> revokeEnrollToken(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req)

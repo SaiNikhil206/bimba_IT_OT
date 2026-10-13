@@ -1,6 +1,7 @@
 package com.bimba.setu.web;
 
 import com.bimba.setu.agents.AgentSources;
+import com.bimba.setu.agents.SourceKinds;
 import com.bimba.setu.security.SecurityService;
 import com.bimba.setu.security.SecurityService.ApiException;
 import com.bimba.setu.security.SecurityService.Principal;
@@ -23,12 +24,14 @@ import java.util.Map;
 /**
  * Console API for one site agent's machine page (organization-scoped like the rest of /api/gw):
  * <pre>
+ *   GET    /agents/source-kinds              data source types and their settings (resources/source-kinds.json) agents.view
  *   GET    /agents/{id}                      machine details, data sources, collector status       agents.view
- *   POST   /agents/{id}/sources              add a data source (OPC UA, Modbus TCP, OPC DA)          agents.manage
+ *   POST   /agents/{id}/sources              add a data source (any type in source-kinds.json)       agents.manage
  *   PUT    /agents/{id}/sources/{sid}        change it                                               agents.manage
  *   DELETE /agents/{id}/sources/{sid}        remove it                                               agents.manage
  *   POST   /agents/{id}/sources/{sid}/devices  add or ignore a device the last scan found              agents.manage
  *   POST   /agents/{id}/commands             ask the machine: test | browse | read | discover | scan agents.manage
+ *                                            | netscan (find data sources on its networks; audited)
  *   GET    /agents/{id}/commands/{cid}       its answer (poll)                                       agents.view
  *   GET    /agents/{id}/live                 last value of every tag the agent sent                  agents.view
  * </pre>
@@ -42,6 +45,13 @@ public class AgentSourcesController {
     public AgentSourcesController(AgentSources sources, SecurityService security) {
         this.sources = sources;
         this.security = security;
+    }
+
+    /** the data source types and their settings: the console builds the data source form from them */
+    @GetMapping("/agents/source-kinds")
+    @PreAuthorize("hasAuthority('agents.view')")
+    Map<String, Object> sourceKinds() {
+        return SourceKinds.definitions();
     }
 
     @GetMapping("/agents/{id}")
@@ -94,9 +104,19 @@ public class AgentSourcesController {
 
     @PostMapping("/agents/{id}/commands")
     @PreAuthorize("hasAuthority('agents.manage')")
-    Map<String, Object> command(@AuthenticationPrincipal Principal p, @PathVariable String id, @RequestBody(required = false) String body)
-            throws ApiException {
-        return sources.command(id, ApiErrors.parse(body), p.org(), p.username());
+    Map<String, Object> command(@AuthenticationPrincipal Principal p, @PathVariable String id, @RequestBody(required = false) String body,
+                                HttpServletRequest req) throws ApiException {
+        JsonObject b = ApiErrors.parse(body);
+        Map<String, Object> r = sources.command(id, b, p.org(), p.username());
+        if (b.has("kind") && "netscan".equals(b.get("kind").getAsString())) {
+            // a network scan touches every address of the plant network: who asked is kept
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("agentId", id);
+            d.put("protocols", b.has("protocols") ? b.get("protocols").toString() : "all");
+            d.put("subnets", b.has("subnets") ? b.get("subnets").toString() : "[]");
+            security.audit(p, "agent.netscan", id, true, req.getRemoteAddr(), d);
+        }
+        return r;
     }
 
     @GetMapping("/agents/{id}/commands/{cid}")

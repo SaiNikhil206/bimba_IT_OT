@@ -200,6 +200,19 @@ services:
     stop_grace_period: 2m
     restart: "no"
 
+  test-linux:                           # TEST ONLY: clean Debian 12 computer (systemd) to try the Linux site agent.
+    profiles: ["test-linux"]            # docker compose --profile test-linux up -d --build; then: docker compose exec test-linux bash
+    build: ./bimba-setu/agent/test-linux
+    hostname: test-linux
+    privileged: true                    # systemd as PID 1 needs the host's cgroups
+    cgroup: host
+    tmpfs: [/run, /run/lock, /tmp]
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ./site-agent/dist:/dist:ro      # bimba-site-agent_all.deb + bimba-site-agent-linux.tar.gz (scripts/build-linux-agent.ps1)
+    stop_signal: SIGRTMIN+3
+    restart: "no"
+
 volumes:
   test-scada-disk:
   setu-data:

@@ -13,7 +13,7 @@ repositories {
 
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 
-version = '1.7.1'
+version = '1.8.0'
 
 dependencies {
     implementation project(':edge')

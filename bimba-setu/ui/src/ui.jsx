@@ -350,3 +350,62 @@ export function useRecordAddress(base, records, noun) {
     mark: (r) => ({ "data-uid": uid(r), "data-open": uid(r) === key || undefined }),
   };
 }
+
+// ------------------------------------------------------------------ sorting and filters for tables
+
+/**
+ * Sort state for a table, remembered for the browser tab (sessionStorage, per name): {key, dir} with dir 1 = up, -1 = down.
+ * Filters work the same way: useRemembered(name, initial).
+ */
+export function useRemembered(name, initial) {
+  const [v, setV] = useState(() => {
+    try {
+      const s = sessionStorage.getItem(`bimba.gw.${name}`);
+      return s ? { ...initial, ...JSON.parse(s) } : initial;
+    } catch {
+      return initial;
+    }
+  });
+  const set = (next) => setV((cur) => {
+    const n = typeof next === "function" ? next(cur) : next;
+    try { sessionStorage.setItem(`bimba.gw.${name}`, JSON.stringify(n)); } catch { /* private window */ }
+    return n;
+  });
+  return [v, set];
+}
+
+/** rows sorted by sort.key: get[key](row) gives a number or a text; ties keep their order */
+export function sortRows(rows, sort, get) {
+  const f = get[sort.key];
+  if (!f) return rows;
+  return rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => {
+    const x = f(a), y = f(b);
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""), undefined, { numeric: true, sensitivity: "base" });
+    return c * sort.dir || i - j;
+  }).map(([r]) => r);
+}
+
+/** a column header that sorts its table; a second click reverses the order */
+export function SortTh({ k, sort, setSort, children, className }) {
+  const on = sort.key === k;
+  return (
+    <th className={className} aria-sort={on ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
+      <button type="button" className={`th-sort${on ? " on" : ""}`} onClick={() => setSort((cur) => ({ key: k, dir: cur.key === k ? -cur.dir : 1 }))}>
+        {children}<span aria-hidden="true" className="th-arrow">{on ? (sort.dir > 0 ? "▲" : "▼") : "↕"}</span>
+      </button>
+    </th>
+  );
+}
+
+/** a labelled filter list for a toolbar: options [[value, label]], "" = all */
+export function FilterSelect({ label, value, onChange, options, all = "All" }) {
+  return (
+    <label className="filter">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label}>
+        <option value="">{all}</option>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  );
+}

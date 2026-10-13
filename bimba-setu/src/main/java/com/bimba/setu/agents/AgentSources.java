@@ -51,10 +51,7 @@ import java.util.regex.Pattern;
 @Service
 public class AgentSources {
     private static final Logger log = LoggerFactory.getLogger("BIMBA.Agents");
-    private static final Set<String> KINDS = Set.of("opcua", "modbus", "opcda", "mqtt", "s7", "eip", "dnp3", "iec104", "sql");
-    private static final Set<String> S7_CPUS = Set.of("S7_300", "S7_400", "S7_1200", "S7_1500", "LOGO");
-    private static final Set<String> MQTT_PAYLOADS = Set.of("value", "json", "sparkplug");
-    private static final Set<String> COMMANDS = Set.of("test", "browse", "read", "discover", "scan");
+    private static final Set<String> COMMANDS = Set.of("test", "browse", "read", "discover", "scan", "netscan");
     private static final Set<String> NEW_DEVICES = Set.of("suggest", "add", "ignore");
     private static final long SCAN_EVERY_MS = 10 * 60_000;
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9 ._-]{0,119}");
@@ -372,8 +369,8 @@ public class AgentSources {
             throw new ApiException(400, "name", "Machine name: 1–120 letters, digits, spaces, '.', '_' or '-', starting with a letter or digit.");
         }
         String kind = text(b, "kind", 16);
-        if (kind == null || !KINDS.contains(kind)) {
-            throw new ApiException(400, "kind", "Choose OPC UA, Modbus TCP, OPC DA, MQTT, Siemens S7 or EtherNet/IP.");
+        if (!SourceKinds.known(kind)) {
+            throw new ApiException(400, "kind", "Choose " + SourceKinds.names() + ".");
         }
         JsonObject settings = b.has("settings") && b.get("settings").isJsonObject() ? b.getAsJsonObject("settings").deepCopy() : new JsonObject();
         validateSettings(kind, settings);
@@ -488,6 +485,9 @@ public class AgentSources {
         if (kind == null || !COMMANDS.contains(kind)) {
             throw new ApiException(400, "kind", "Unknown request.");
         }
+        if ("netscan".equals(kind)) {
+            return Map.of("id", queue(agent, orgId, kind, netscan(b), actor).toString());
+        }
         JsonObject req = new JsonObject();
         JsonObject source = b.has("source") && b.get("source").isJsonObject() ? b.getAsJsonObject("source").deepCopy() : null;
         String sourceId = text(b, "sourceId", 64);
@@ -526,6 +526,81 @@ public class AgentSources {
             }
         }
         return Map.of("id", queue(agent, orgId, kind, req, actor).toString());
+    }
+
+    /** 10.0.0.0/24, 10.0.0.5, 10.0.0.5:5020, plc7, plc7:5020 */
+    private static final Pattern SCAN_TARGET = Pattern.compile(
+            "^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})(?:/(\\d{1,2})|:(\\d{1,5}))?$|^[A-Za-z0-9][A-Za-z0-9.-]{0,252}(?::(\\d{1,5}))?$");
+    static final int SCAN_MAX_HOSTS = 1024;
+
+    /**
+     * A network scan request: body {protocols?: [kinds], subnets?: ["192.168.10.0/24", "10.0.0.5", "plc7", "plc7:5020"],
+     * ownNetworks?, timeoutMs?}. The agent tries the types' ports (from source-kinds.json) on its own networks (each up to a
+     * /24 around its address) and on the given addresses, then asks each open port who answers, read only. An address with
+     * a port is asked on that port only, as each chosen type. At most 1024 addresses.
+     */
+    static JsonObject netscan(JsonObject b) throws ApiException {
+        JsonObject req = new JsonObject();
+        JsonArray protocols = new JsonArray();
+        JsonObject ports = new JsonObject();
+        JsonArray asked = b.has("protocols") && b.get("protocols").isJsonArray() ? b.getAsJsonArray("protocols") : null;
+        for (String k : SourceKinds.ids()) {
+            boolean wanted = asked == null || asked.contains(new com.google.gson.JsonPrimitive(k));
+            List<Integer> p = SourceKinds.scanPorts(k);
+            if (wanted && !p.isEmpty()) {
+                protocols.add(k);
+                JsonArray pa = new JsonArray();
+                p.forEach(pa::add);
+                ports.add(k, pa);
+            }
+        }
+        if (protocols.isEmpty()) {
+            throw new ApiException(400, "protocols", "Choose at least one type of data source to look for.");
+        }
+        JsonArray subnets = new JsonArray();
+        long hosts = 0;
+        if (b.has("subnets") && b.get("subnets").isJsonArray()) {
+            for (JsonElement e : b.getAsJsonArray("subnets")) {
+                String t = e.isJsonPrimitive() ? e.getAsString().trim() : "";
+                if (t.isEmpty()) {
+                    continue;
+                }
+                java.util.regex.Matcher m = SCAN_TARGET.matcher(t);
+                boolean ok = m.matches();
+                if (ok && m.group(1) != null) {
+                    for (int i = 1; i <= 4; i++) {
+                        ok &= Integer.parseInt(m.group(i)) <= 255;
+                    }
+                    int bits = m.group(5) == null ? 32 : Integer.parseInt(m.group(5));
+                    ok &= bits >= 22 && bits <= 32;
+                    hosts += 1L << (32 - bits);
+                } else {
+                    hosts++;
+                }
+                String port = ok ? m.group(6) != null ? m.group(6) : m.group(7) : null;
+                ok &= port == null || Integer.parseInt(port) >= 1 && Integer.parseInt(port) <= 65535;
+                if (!ok) {
+                    throw new ApiException(400, "subnets", "\"" + t + "\": an address (10.0.0.5), a host name, either with a port"
+                            + " (plc7:5020), or a network from /22 to /32 (192.168.10.0/24).");
+                }
+                subnets.add(t);
+            }
+        }
+        if (subnets.size() > 8 || hosts > SCAN_MAX_HOSTS) {
+            throw new ApiException(400, "subnets", "At most 8 entries and " + SCAN_MAX_HOSTS + " addresses (four /24 networks) per scan.");
+        }
+        long timeout = b.has("timeoutMs") && b.get("timeoutMs").isJsonPrimitive() ? b.get("timeoutMs").getAsLong() : 500;
+        req.add("protocols", protocols);
+        req.add("ports", ports);
+        req.add("subnets", subnets);
+        req.addProperty("ownNetworks", !b.has("ownNetworks") || b.get("ownNetworks").getAsBoolean());
+        req.addProperty("timeoutMs", Math.max(100, Math.min(3000, timeout)));
+        // the Windows agent hands a request to its collector by the source's type: name one it reads
+        JsonObject source = new JsonObject();
+        source.addProperty("kind", protocols.get(0).getAsString());
+        source.add("settings", new JsonObject());
+        req.add("source", source);
+        return req;
     }
 
     private UUID queue(UUID agent, long orgId, String kind, JsonObject req, String actor) {
@@ -988,18 +1063,14 @@ public class AgentSources {
         return id;
     }
 
-    private static void validateSettings(String kind, JsonObject s) throws ApiException {
+    /**
+     * The settings of a {@code kind} source: the field list (resources/source-kinds.json, {@link SourceKinds}) first, then
+     * the rules it cannot say: OPC UA devices, the MQTT CA certificate, DNP3 addresses, the SQL server, names and query.
+     */
+    static void validateSettings(String kind, JsonObject s) throws ApiException {
+        SourceKinds.check(kind, s);
         switch (kind) {
             case "opcua" -> {
-                String ep = Json.str(s, "endpoint");
-                if (ep == null || !ep.trim().startsWith("opc.tcp://") || ep.length() > 300) {
-                    throw new ApiException(400, "endpoint", "Endpoint: an address like opc.tcp://localhost:62541.");
-                }
-                s.addProperty("endpoint", ep.trim());
-                String auth = Json.str(s, "auth");
-                if ("Username".equals(auth) && (Json.str(s, "username") == null || Json.str(s, "username").isBlank())) {
-                    throw new ApiException(400, "username", "Enter the OPC UA user name.");
-                }
                 // one machine per device: the devices folder, the name prefix, what to do with new devices, node id -> machine
                 String from = Json.str(s, "machinesFrom");
                 if (from == null || from.isBlank()) {
@@ -1016,7 +1087,7 @@ public class AgentSources {
                     throw new ApiException(400, "machinePrefix", "Name prefix: up to 60 letters, digits, spaces, '.', '_' or '-'.");
                 }
                 String mode = Json.str(s, "newDevices");
-                if (mode != null && !NEW_DEVICES.contains(mode)) {
+                if (mode != null && !mode.isEmpty() && !NEW_DEVICES.contains(mode)) {
                     throw new ApiException(400, "newDevices", "New devices: suggest, add or ignore.");
                 }
                 JsonObject devices = new JsonObject();
@@ -1031,180 +1102,44 @@ public class AgentSources {
                 }
                 s.add("devices", devices);
             }
-            case "modbus" -> {
-                String host = Json.str(s, "host");
-                if (host == null || host.isBlank() || host.length() > 255) {
-                    throw new ApiException(400, "host", "Enter the PLC's host name or IP address.");
-                }
-                int port = s.has("port") ? s.get("port").getAsInt() : 502;
-                if (port < 1 || port > 65535) {
-                    throw new ApiException(400, "port", "Port: 1–65535.");
-                }
-            }
-            case "opcda" -> {
-                String prog = Json.str(s, "progId");
-                if (prog == null || prog.isBlank() || prog.length() > 200) {
-                    throw new ApiException(400, "progId", "Choose the OPC DA server (ProgID, e.g. OPCLabs.KitServer.2).");
-                }
-            }
             case "mqtt" -> {
-                String url = Json.str(s, "url");
-                if (url == null || url.isBlank() || url.length() > 300
-                        || !url.trim().matches("(?i)^((tcp|ssl|mqtt|mqtts|ws|wss)://)?[^\\s/?#@]+(:\\d{1,5})?(/[^\\s]*)?$")) {
-                    throw new ApiException(400, "url", "Broker: an address like mqtt://broker:1883 or mqtts://broker:8883.");
-                }
-                s.addProperty("url", url.trim());
-                String payload = Json.str(s, "payload");
-                if (payload == null || !MQTT_PAYLOADS.contains(payload)) {
-                    throw new ApiException(400, "payload", "Messages: value, json or sparkplug.");
-                }
-                int qos = s.has("qos") && s.get("qos").isJsonPrimitive() ? s.get("qos").getAsInt() : 1;
-                if (qos < 0 || qos > 1) {
-                    throw new ApiException(400, "qos", "QoS: 0 or 1.");
-                }
-                String clientId = Json.str(s, "clientId");
-                if (clientId != null && (clientId.length() > 64 || !clientId.matches("[A-Za-z0-9._-]*"))) {
-                    throw new ApiException(400, "clientId", "Client id: up to 64 letters, digits, '.', '_' or '-' (empty = automatic).");
-                }
                 String ca = Json.str(s, "caCert");
-                if (ca != null && !ca.isBlank() && (!ca.contains("-----BEGIN CERTIFICATE-----") || ca.length() > 20_000)) {
+                if (!ca.isBlank() && !ca.contains("-----BEGIN CERTIFICATE-----")) {
                     throw new ApiException(400, "caCert", "Broker CA certificate: paste the PEM text (-----BEGIN CERTIFICATE----- ...).");
                 }
-                long stale = s.has("staleSeconds") && s.get("staleSeconds").isJsonPrimitive() ? s.get("staleSeconds").getAsLong() : 0;
-                if (stale < 0 || stale > 86_400) {
-                    throw new ApiException(400, "staleSeconds", "Stale after: 0 (never) to 86400 seconds.");
-                }
             }
-            case "s7", "eip" -> {
-                String host = Json.str(s, "host");
-                if (host == null || host.isBlank() || host.length() > 255 || !host.trim().matches("[A-Za-z0-9.:\\[\\]_-]+")) {
-                    throw new ApiException(400, "host", "Enter the PLC's host name or IP address.");
-                }
-                s.addProperty("host", host.trim());
-                for (String k : List.of("port", "rack", "slot", "backplane")) {
-                    if (s.has(k) && s.get(k).isJsonPrimitive() && !s.get(k).getAsString().isBlank()) {
-                        int v;
-                        try {
-                            v = s.get(k).getAsInt();
-                        } catch (RuntimeException e) {
-                            v = -1;
-                        }
-                        if (v < 0 || v > ("port".equals(k) ? 65535 : 31)) {
-                            throw new ApiException(400, k, k.substring(0, 1).toUpperCase(Locale.ROOT) + k.substring(1) + ": "
-                                    + ("port".equals(k) ? "1–65535." : "0–31."));
-                        }
-                    }
-                }
-                String cpu = Json.str(s, "cpu");
-                if ("s7".equals(kind) && cpu != null && !S7_CPUS.contains(cpu)) {
-                    throw new ApiException(400, "cpu", "CPU: S7_300, S7_400, S7_1200, S7_1500 or LOGO.");
-                }
-            }
-            case "dnp3", "iec104" -> {
-                String host = Json.str(s, "host");
-                if (host == null || host.isBlank() || host.length() > 255 || !host.trim().matches("[A-Za-z0-9.:\\[\\]_-]+")) {
-                    throw new ApiException(400, "host", "Enter the outstation's host name or IP address.");
-                }
-                s.addProperty("host", host.trim());
-                whole(s, "port", 1, 65535, "Port: 1–65535.");
-                if ("dnp3".equals(kind)) {
-                    whole(s, "outstation", 0, 65519, "Outstation address: 0–65519.");
-                    whole(s, "master", 0, 65519, "Master address: 0–65519.");
-                    long out = s.has("outstation") ? s.get("outstation").getAsLong() : 10, master = s.has("master") ? s.get("master").getAsLong() : 1;
-                    if (out == master) {
-                        throw new ApiException(400, "master", "The master address must differ from the outstation's.");
-                    }
-                } else {
-                    whole(s, "commonAddress", 1, 65534, "Common address: 1–65534.");
-                    whole(s, "giMinutes", 0, 1440, "General interrogation: every 0 (only after connecting) to 1440 minutes.");
-                    zone(s);
+            case "dnp3" -> {
+                long out = s.has("outstation") ? s.get("outstation").getAsLong() : 10, master = s.has("master") ? s.get("master").getAsLong() : 1;
+                if (out == master) {
+                    throw new ApiException(400, "master", "The master address must differ from the outstation's.");
                 }
             }
             case "sql" -> {
-                String engine = Json.str(s, "engine");
-                if (engine == null || !SqlDriver.ENGINES.contains(engine)) {
-                    throw new ApiException(400, "engine", "Database: sqlserver, postgresql or mysql.");
-                }
-                String host = Json.str(s, "host");
-                if (host == null || !SqlDriver.HOST.matcher(host.trim()).matches()) {
+                if (!SqlDriver.HOST.matcher(Json.str(s, "host")).matches()) {
                     throw new ApiException(400, "host", "Enter the database server's host name or IP address.");
                 }
-                s.addProperty("host", host.trim());
-                whole(s, "port", 1, 65535, "Port: 1–65535.");
                 String instance = Json.str(s, "instance");
-                if (instance == null || instance.isBlank() || !"sqlserver".equals(engine)) {
+                if (instance.isBlank()) {
                     s.remove("instance");
-                } else if (!SqlDriver.INSTANCE.matcher(instance.trim()).matches()) {
+                } else if (!SqlDriver.INSTANCE.matcher(instance).matches()) {
                     throw new ApiException(400, "instance", "Instance: up to 16 letters, digits, '_', '$', '#' or '-' (e.g. SQLEXPRESS).");
-                } else {
-                    s.addProperty("instance", instance.trim());
                 }
                 String database = Json.str(s, "database");
-                if (database == null || database.isBlank()) {
+                if (database.isBlank()) {
                     s.remove("database");
-                } else if (!SqlDriver.DATABASE.matcher(database.trim()).matches()) {
+                } else if (!SqlDriver.DATABASE.matcher(database).matches()) {
                     throw new ApiException(400, "database", "Database: up to 128 letters, digits, spaces, '_', '.', '$' or '-'.");
-                } else {
-                    s.addProperty("database", database.trim());
-                }
-                String user = Json.str(s, "username");
-                if (user != null && user.length() > 128) {
-                    throw new ApiException(400, "username", "User name: at most 128 characters.");
-                }
-                String tls = Json.str(s, "tls");
-                if (tls.isEmpty()) {
-                    s.remove("tls");                                                // off
-                } else if (!SqlDriver.TLS.contains(tls)) {
-                    throw new ApiException(400, "tls", "Encryption: off, trust or verify.");
-                }
-                String layout = Json.str(s, "layout");
-                if (layout == null || !SqlDriver.LAYOUTS.contains(layout)) {
-                    throw new ApiException(400, "layout", "Result: rows (one row per tag) or columns (one column per tag).");
                 }
                 try {
                     s.addProperty("query", SqlDriver.checkQuery(Json.str(s, "query")));
                 } catch (IllegalArgumentException bad) {
                     throw new ApiException(400, "query", bad.getMessage() + ".");
                 }
-                whole(s, "staleSeconds", 0, 31 * 86_400, "Stale after: 0 (never) to 2678400 seconds.");
-                whole(s, "timeoutMs", 1000, 300_000, "Timeout: 1000–300000 ms.");
-                zone(s);
             }
-            default -> throw new ApiException(400, "kind", "Unknown source type.");
+            default -> {
+                // the field list says everything
+            }
         }
-    }
-
-    /** an optional whole number setting within min..max (empty = not set) */
-    private static void whole(JsonObject s, String k, long min, long max, String message) throws ApiException {
-        if (!s.has(k) || s.get(k).isJsonNull() || s.get(k).isJsonPrimitive() && s.get(k).getAsString().isBlank()) {
-            s.remove(k);
-            return;
-        }
-        long v;
-        try {
-            v = Long.parseLong(s.get(k).getAsString().trim());
-        } catch (RuntimeException e) {
-            throw new ApiException(400, k, message);
-        }
-        if (v < min || v > max) {
-            throw new ApiException(400, k, message);
-        }
-        s.addProperty(k, v);
-    }
-
-    /** an optional IANA time zone (e.g. Europe/Berlin), default UTC */
-    private static void zone(JsonObject s) throws ApiException {
-        String z = Json.str(s, "timeZone");
-        if (z == null || z.isBlank()) {
-            s.remove("timeZone");
-            return;
-        }
-        try {
-            java.time.ZoneId.of(z.trim());
-        } catch (java.time.DateTimeException e) {
-            throw new ApiException(400, "timeZone", "Time zone: a name like UTC, Europe/Berlin or Asia/Kolkata.");
-        }
-        s.addProperty("timeZone", z.trim());
     }
 
     /** MQTT tag address for the source's message format (see MqttDriver) */

@@ -5,6 +5,7 @@ import com.bimba.setu.collect.Dnp3Driver;
 import com.bimba.setu.collect.Driver;
 import com.bimba.setu.collect.Iec104Driver;
 import com.bimba.setu.collect.ModbusDriver;
+import com.bimba.setu.collect.NetScan;
 import com.bimba.setu.collect.MqttDriver;
 import com.bimba.setu.collect.OpcDaDriver;
 import com.bimba.setu.collect.LogixDriver;
@@ -115,13 +116,16 @@ public final class EdgeEngine {
     }
 
     /**
-     * A console request: op test | browse | scan | read, msg {source:{kind,settings}, nodeId, limit, tags}.
+     * A console request: op test | browse | scan | read | netscan (NetScan), msg {source:{kind,settings}, nodeId, limit, tags}.
      * Returns the result object; throws with a readable message when the request fails.
      */
     public static Object command(String op, JsonObject msg) throws Exception {
         JsonObject source = msg.has("source") && msg.get("source").isJsonObject() ? msg.getAsJsonObject("source") : new JsonObject();
         String kind = str(source, "kind");
         JsonObject settings = source.has("settings") && source.get("settings").isJsonObject() ? source.getAsJsonObject("settings") : new JsonObject();
+        if ("netscan".equals(op)) {
+            return NetScan.run(msg);                       // the source only names a type the Windows agent hands over
+        }
         if ("opcua".equals(kind) && "test".equals(op)) {
             return OpcUaDriver.test(settings);
         } else if ("opcua".equals(kind) && "browse".equals(op)) {

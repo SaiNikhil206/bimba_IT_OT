@@ -344,6 +344,20 @@ table.qtab .q-unit { display: none; }
 }
 details.adv summary { cursor: pointer; color: var(--text-2); font-weight: 500; font-size: 13px; }
 details.adv[open] summary { margin-bottom: 12px; }
+/* a setting Setu refused (the data source form opens Advanced settings when it is in there) */
+.field [aria-invalid="true"], .check input[aria-invalid="true"] { border-color: var(--bad); outline: 1px solid var(--bad); }
+/* several buttons in a card's header (Scan the network + Add data source) or next to the tag list */
+.card-h > .row-acts, .tag-h .row-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* numbered steps inside a dialog (Add a computer) */
+.step-h { font-size: 13.5px; font-weight: 600; margin: 6px 0 -2px; }
+/* Live data: one card per machine, its state on the right, a muted line when it has no reading */
+.m-state { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; text-align: right; }
+.card .pad { padding: 4px 20px 16px; }
+.card.off { opacity: .7; }
+/* checkbox lists, e.g. the types a network scan looks for */
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 6px 14px; }
+.checks .check { min-width: 0; }
+.checks .check > span { min-width: 0; }
 
 @media (max-width: 860px) {
   .seg, .seg.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -475,4 +489,29 @@ table.regtab td .ellipsis { max-width: 260px; }
   table.regtab .reg-k { display: inline; color: var(--muted); }
   table.regtab td.empty { grid-column: 1 / -1; padding: 12px 0; }
   .reg-tools input, .reg-tools select { width: 100%; flex: 1 1 140px; }
+}
+
+/* sortable column headers and toolbar filters (Site agents, data sources, live data) */
+.th-sort { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+.th-sort:hover, .th-sort.on { color: var(--text); }
+.th-sort .th-arrow { font-size: 10px; opacity: .45; }
+.th-sort.on .th-arrow { opacity: 1; }
+th.r .th-sort { flex-direction: row-reverse; }
+.filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); min-width: 0; }
+.filter select { width: auto; max-width: 180px; padding-top: 6px; padding-bottom: 6px; }
+.toolbar .count { margin-left: auto; }
+@media (max-width: 640px) {
+  .filter { flex: 1 1 calc(50% - 10px); }
+  .filter select { flex: 1; max-width: none; min-width: 0; }
+  .toolbar input[type="search"] { max-width: none; flex: 1 1 100%; }
+  .toolbar .count { margin-left: 0; }
+}
+.card-tools { padding: 0 20px 12px; }
+.toolbar:has(.filter) input[type="search"] { max-width: 240px; }
+@media (max-width: 640px) { .toolbar:has(.filter) input[type="search"] { max-width: none; } }
+/* a machine's state in its card header: never wider than the card; on phones it drops below the name, left aligned */
+.card-h > .m-state { flex: 0 1 auto; max-width: 100%; }
+.m-state > * { max-width: 100%; }
+@media (max-width: 640px) {
+  .card-h > .m-state { flex: 1 1 100%; align-items: flex-start; text-align: left; }
 }

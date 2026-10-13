@@ -35,7 +35,7 @@ public class OrgService {
      * organization (web/SpaController.java) and the server's own paths: a slug may not be one of their first segments.
      */
     public static final java.util.Set<String> RESERVED = java.util.Set.of("overview", "agents", "pipelines", "destinations", "delivery", "quarantine", "registry",
-            "users", "roles", "audit", "profile", "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system",
+            "users", "roles", "audit", "tokens", "profile", "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system",
             "actuator", "assets", "static", "index", "new", "admin", "settings", "help");
 
     private final Db db;
