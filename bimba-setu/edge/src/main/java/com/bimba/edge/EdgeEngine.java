@@ -13,6 +13,7 @@ import com.bimba.setu.collect.S7Driver;
 import com.bimba.setu.collect.OpcUaDriver;
 import com.bimba.setu.collect.OpcUaPki;
 import com.bimba.setu.collect.SqlDriver;
+import com.bimba.setu.collect.Writer;
 import com.bimba.setu.config.TagModel;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -21,7 +22,6 @@ import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -116,7 +116,8 @@ public final class EdgeEngine {
     }
 
     /**
-     * A console request: op test | browse | scan | read | netscan (NetScan), msg {source:{kind,settings}, nodeId, limit, tags}.
+     * A console request: op test | browse | scan | read | netscan (NetScan) | write (a machine command, Writer),
+     * msg {source:{kind,settings}, nodeId, limit, tags, tag, value}.
      * Returns the result object; throws with a readable message when the request fails.
      */
     public static Object command(String op, JsonObject msg) throws Exception {
@@ -125,6 +126,14 @@ public final class EdgeEngine {
         JsonObject settings = source.has("settings") && source.get("settings").isJsonObject() ? source.getAsJsonObject("settings") : new JsonObject();
         if ("netscan".equals(op)) {
             return NetScan.run(msg);                       // the source only names a type the Windows agent hands over
+        }
+        if ("write".equals(op)) {
+            // a machine command: {source, tag:{address, name, dataType, scaling, units, writeAddress}, value}
+            JsonObject t = msg.has("tag") && msg.get("tag").isJsonObject() ? msg.getAsJsonObject("tag") : null;
+            if (t == null || str(t, "address") == null) {
+                throw new Exception("which tag?");
+            }
+            return Writer.write(kind, settings, tag("write", "write", kind, t), t, msg.get("value"));
         }
         if ("opcua".equals(kind) && "test".equals(op)) {
             return OpcUaDriver.test(settings);
@@ -212,27 +221,7 @@ public final class EdgeEngine {
     }
 
     static TagModel.Tag tag(String machine, String sourceId, String kind, JsonObject t) {
-        String name = strOr(t, "name", strOr(t, "address", "tag")).toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "_").replaceAll("^_|_$", "");
-        String address = strOr(t, "address", "");
-        if ("modbus".equals(kind)) {
-            address = address.trim().toUpperCase(Locale.ROOT);
-        }
-        boolean scaled = t.has("rawLow") && t.has("rawHigh") && t.has("scaledLow") && t.has("scaledHigh");
-        TagModel.Kind k = switch (kind == null ? "" : kind) {
-            case "modbus" -> TagModel.Kind.MODBUS;
-            case "opcda" -> TagModel.Kind.OPCDA;
-            case "mqtt" -> TagModel.Kind.MQTT;
-            case "s7" -> TagModel.Kind.S7;
-            case "eip" -> TagModel.Kind.EIP;
-            case "dnp3" -> TagModel.Kind.DNP3;
-            case "iec104" -> TagModel.Kind.IEC104;
-            case "sql" -> TagModel.Kind.SQL;
-            default -> TagModel.Kind.OPCUA;
-        };
-        return new TagModel.Tag(machine, name, machine + "/" + name, k,
-                sourceId, address, str(t, "dataType"), str(t, "unit"), num(t, "rawLow"), num(t, "rawHigh"), num(t, "scaledLow"),
-                num(t, "scaledHigh"), scaled, str(t, "sourceUnit"), TagModel.optNum(t, "engLow"), TagModel.optNum(t, "engHigh"));
+        return TagModel.of(machine, sourceId, kind, t);
     }
 
     static String str(JsonObject o, String k) {
@@ -243,13 +232,5 @@ public final class EdgeEngine {
     static String strOr(JsonObject o, String k, String d) {
         String v = str(o, k);
         return v == null || v.isBlank() ? d : v;
-    }
-
-    private static double num(JsonObject o, String k) {
-        try {
-            return o.has(k) && o.get(k).isJsonPrimitive() ? o.get(k).getAsDouble() : 0;
-        } catch (RuntimeException e) {
-            return 0;
-        }
     }
 }

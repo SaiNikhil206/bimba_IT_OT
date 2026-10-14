@@ -164,6 +164,39 @@ public final class TagModel {
         return tag;
     }
 
+    /**
+     * A site agent data source's tag ({name, address, dataType, unit, rawLow..scaledHigh, sourceUnit, engLow, engHigh}) as
+     * the edge collector reads it (also what Setu uses to show an agent's raw read in engineering values).
+     */
+    public static Tag of(String machine, String sourceId, String kind, JsonObject t) {
+        String name = strOr(t, "name", strOr(t, "address", "tag")).toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_").replaceAll("^_|_$", "");
+        String address = strOr(t, "address", "");
+        if ("modbus".equals(kind)) {
+            address = address.trim().toUpperCase(Locale.ROOT);
+        }
+        boolean scaled = t.has("rawLow") && t.has("rawHigh") && t.has("scaledLow") && t.has("scaledHigh");
+        Kind k = switch (kind == null ? "" : kind) {
+            case "modbus" -> Kind.MODBUS;
+            case "opcda" -> Kind.OPCDA;
+            case "mqtt" -> Kind.MQTT;
+            case "s7" -> Kind.S7;
+            case "eip" -> Kind.EIP;
+            case "dnp3" -> Kind.DNP3;
+            case "iec104" -> Kind.IEC104;
+            case "sql" -> Kind.SQL;
+            default -> Kind.OPCUA;
+        };
+        return new Tag(machine, name, machine + "/" + name, k, sourceId, address, str(t, "dataType"), str(t, "unit"),
+                num(t, "rawLow", 0), num(t, "rawHigh", 0), num(t, "scaledLow", 0), num(t, "scaledHigh", 0), scaled,
+                str(t, "sourceUnit"), optNum(t, "engLow"), optNum(t, "engHigh"));
+    }
+
+    private static String strOr(JsonObject o, String k, String d) {
+        String v = str(o, k);
+        return v == null || v.isBlank() ? d : v;
+    }
+
     public static boolean isModbusDriver(String server) {
         return server != null && (server.equals(MODBUS_DRIVER) || server.equalsIgnoreCase("modbus")
                 || server.equals("Ignition OPC UA Server"));

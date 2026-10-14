@@ -303,6 +303,23 @@ final class EdgeCollector {
             } else if ("discover".equals(kind)) {
                 answer.put("ok", true);
                 answer.put("result", Discovery.all());
+            } else if ("write".equals(kind)) {
+                // a machine command: this computer's own setting first, then each command id runs once at most
+                AgentConfig now = AgentConfig.tryLoad();
+                if (now == null || !now.writesAllowed()) {
+                    answer.put("ok", false);
+                    answer.put("error", now == null ? "The agent cannot read its own settings, so it refuses machine commands."
+                            : "Machine commands are turned off on this computer (bimba-site-agent writes on).");
+                    answer.put("refusedBy", "computer");
+                } else if (!ran(id)) {
+                    answer.put("ok", false);
+                    answer.put("error", "This command was already carried out.");
+                } else {
+                    Log.info("machine command " + id + " from " + Json.str(req, "requestedBy") + ": "
+                            + Json.str(Json.obj(req, "tag"), "address") + " = " + req.get("value"));
+                    answer.put("ok", true);
+                    answer.put("result", EdgeEngine.command(kind, req));
+                }
             } else {
                 String sourceKind = Json.str(Json.obj(req, "source"), "kind");
                 if (EdgeEngine.collectable(sourceKind) && !"opcda".equals(sourceKind)) {
@@ -326,6 +343,18 @@ final class EdgeCollector {
         } catch (Exception e) {
             Log.warn("could not send the answer to console request " + kind + ": " + e.getMessage());
         }
+    }
+
+    /** machine command ids carried out lately (a command is never repeated, even if Setu handed it out twice) */
+    private final Map<String, Boolean> ranCommands = java.util.Collections.synchronizedMap(new LinkedHashMap<>(64, 0.75f, false) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Boolean> e) {
+            return size() > 500;
+        }
+    });
+
+    private boolean ran(String id) {
+        return id != null && ranCommands.putIfAbsent(id, Boolean.TRUE) == null;
     }
 
     // ------------------------------------------------------------------ supervision + status
@@ -364,6 +393,8 @@ final class EdgeCollector {
         m.put("rejected", rejected.get());
         m.put("lastUpload", lastUpload);
         m.put("lastUploadError", lastUploadError);
+        AgentConfig now = AgentConfig.tryLoad();
+        m.put("writes", now != null && now.writesAllowed() ? "allowed" : "refused");
         m.put("at", Instant.now().toString());
         return m;
     }

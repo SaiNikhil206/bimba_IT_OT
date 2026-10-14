@@ -286,6 +286,18 @@ namespace Bimba.SiteAgent
                     answer["ok"] = true;
                     answer["result"] = Discovery.All();
                 }
+                else if (kind == "write" && !WritesAllowedHere(out string why))
+                {
+                    // a machine command: this machine's own setting wins over Setu
+                    answer["ok"] = false;
+                    answer["error"] = why;
+                    answer["refusedBy"] = "computer";
+                }
+                else if (kind == "write" && !Ran(id))
+                {
+                    answer["ok"] = false;
+                    answer["error"] = "This command was already carried out.";
+                }
                 else
                 {
                     var source = Json.Obj(req, "source");
@@ -320,6 +332,30 @@ namespace Bimba.SiteAgent
             }
         }
 
+        private static bool WritesAllowedHere(out string why)
+        {
+            var now = AgentConfig.TryLoad();
+            why = now == null ? "The agent cannot read its own settings, so it refuses machine commands."
+                : "Machine commands are turned off on this machine (BIMBA-Site-Agent-Setup.exe writes on).";
+            return now != null && now.WritesAllowed;
+        }
+
+        /// <summary>machine command ids carried out lately: a command is never repeated, even if Setu handed it out twice</summary>
+        private readonly Queue<string> ranOrder = new Queue<string>();
+        private readonly HashSet<string> ranIds = new HashSet<string>();
+
+        private bool Ran(string id)
+        {
+            if (id == null) return false;
+            lock (ranIds)
+            {
+                if (!ranIds.Add(id)) return false;
+                ranOrder.Enqueue(id);
+                if (ranOrder.Count > 500) ranIds.Remove(ranOrder.Dequeue());
+                return true;
+            }
+        }
+
         // ------------------------------------------------------------------ supervision + status
 
         private void WatchLoop()
@@ -346,6 +382,7 @@ namespace Bimba.SiteAgent
                 ["rejected"] = Interlocked.Read(ref rejected),
                 ["lastUpload"] = lastUpload,
                 ["lastUploadError"] = lastUploadError,
+                ["writes"] = WritesAllowedHere(out _) ? "allowed" : "refused",
                 ["at"] = DateTime.UtcNow.ToString("o"),
             };
         }

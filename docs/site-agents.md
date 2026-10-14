@@ -133,14 +133,15 @@ Setu serves `site-agent/dist` (mounted at `/installers`), so a rebuild needs no 
 
 An organization adds data sources to an agent in the Setu console (**Site agents → agent → Data sources → Add data
 source**). The agent reads them on its computer, sends only changes to Setu, and each source reports as one
-machine. **Test connection** and **Browse** run on the agent's computer. Every source is read only.
+machine. **Test connection** and **Browse** run on the agent's computer. Every source is read only, unless an OPC UA,
+Modbus or MQTT source allows **machine commands** (see below).
 
 | Type | Agent | Tag address | Notes |
 |---|---|---|---|
 | OPC UA | all | node id (browse) | any OPC UA server; certificate pinning; one machine per device folder |
-| Modbus TCP | all | `HR1`, `IR5`, `C3`, `DI2` (`2.HR1` = unit 2) | |
+| Modbus TCP | all | `HR1`, `IR5`, `C3`, `DI2` (`2.HR1` = unit 2) | commands: HR (FC 6) and C (FC 5) |
 | OPC DA (classic) | Windows 1.6+ | item id (browse) | through the 32-bit bridge, local or DCOM |
-| MQTT / Sparkplug B | 1.6+ | topic, `topic#field`, `group/node[/device]#metric` | subscribe only; rebirth requests optional |
+| MQTT / Sparkplug B | 1.6+ | topic, `topic#field`, `group/node[/device]#metric` | subscribe; commands publish (NCMD / DCMD); rebirth requests optional |
 | Siemens S7 | 1.6+ | `DB1.DBD0`, `MW10`, `I0.0`, `:DINT`, `:STRING[20]` | S7-300/400/1200/1500, LOGO! (PUT/GET on, no optimized blocks) |
 | EtherNet/IP (Logix) | 1.6+ | `Line1_Speed`, `Motor.Speed`, `Levels[3]` | ControlLogix / CompactLogix |
 | DNP3 | 1.7+ | `AI5`, `BI3`, `DBI2`, `BO1`, `AO2`, `CT4`, `FC4`, `OS1` | see below |
@@ -158,6 +159,51 @@ and Setu checks every save against the same list (`SourceKinds`), so a new setti
 rules a list cannot express stay in code (`AgentSources.validateSettings`): OPC UA devices, the MQTT CA certificate,
 DNP3 master ≠ outstation, the SQL server, names and query. The main fields show first; Advanced settings (ports,
 timeouts, security details, time zones) opens by itself when one of them differs from its default or Setu refused one.
+
+### Machine commands (writing values)
+
+Agents from **1.9** can also **write one value to one tag** of an OPC UA, Modbus TCP or MQTT / Sparkplug B source
+(setpoints, start / stop, mode changes). Every other type stays read only.
+
+**Machines page** (Setu console → **Machines**, `/<org>/machines`; anyone with `gateway.view`, `agents.view` or a
+machine command permission): one card per machine the organization's agents collect (state, tags and how many are
+writable, last update, how many active pipelines deliver it, last command, approvals waiting). A machine's page
+(`/<org>/machines/<machine>`) shows its **site agent** (status, computer, version; link to the agent page), its **data
+source** (type, address, read rate; link to edit it on the agent), the **pipelines** that deliver it (active or paused,
+destinations, how many of its tags each takes; links to the pipelines), its **live data** (every tag with quality and age;
+**Read now** asks the agent to read all tags once, read only, also done when the page opens and Setu has not seen a value
+yet) and its **machine commands** (Set value… on writable tags, approvals, history). On the agent page, Live data's
+machine names link to their Machines page. Old `/commands` links open Machines.
+Server side: `agents/MachineCommands`; on the agent `collect-lib Writer` (each command opens its own short connection
+beside the collector's).
+
+What has to be true before a value reaches a machine, in order:
+
+1. The data source allows it: **Allow machine commands** under its Advanced settings (off by default).
+2. The tag is marked **writable** (tag ⋯ → Writable) with its **lowest and highest value** (numbers; in the tag's unit as
+   shown: scaling and unit conversion are undone before writing). Modbus: holding registers and coils only. MQTT:
+   optional **command topic** (e.g. `plant/line1/setpoint/set`), else the tag's own topic.
+3. The person has **`writes.send`** (built-in roles *Machine operator* and *Supervisor*, or Administrator) and the value is
+   inside the limits.
+4. Commands are not **stopped** for the organization, the agent's site or the agent (kill switch on the page: anyone with
+   `writes.send`, `writes.approve` or `writes.manage` can stop; only `writes.manage` resumes; stopping cancels what waits).
+5. A tag marked **A second person approves each command** waits up to 15 minutes for someone else with `writes.approve`
+   (never the requester); Setu checks everything again when it is approved.
+6. The agent picks the command up within **15 seconds** or it is never carried out (a late setpoint is worse than none).
+7. The computer itself allows commands: `sudo bimba-site-agent writes off` (Linux) or `BIMBA-Site-Agent-Setup.exe writes off`
+   (Windows, elevated) refuses every command whatever Setu says, read before each command, no restart needed; `writes on`
+   allows them again. The agent page shows the setting. Each command id runs once at most.
+
+The agent reads the tag, writes, reads it back and answers with the value before and after: **Done · read back** (the
+machine holds the value), **Done · not confirmed** (it reads something else, e.g. the device limited it; MQTT: the
+machine did not report the new value within 5 s), or **Failed** with the device's reason (OPC UA `Bad_NotWritable`,
+Modbus exception, type out of range). OPC UA values take the node's own type (Boolean, signed / unsigned integers, Float,
+Double, String). A command published on the topic the tag is read from cannot be confirmed (the broker echoes it); use a
+command topic. No answer within 60 s = **Expired** (the value may or may not have been written: check the machine).
+
+Every request, approval, rejection, cancellation, stop, resume, result and expiry is in the audit log (`machine.write.*`);
+the page's history keeps 90 days. Test servers: `agent/test-linux/opcua_write_sim.py` (writable OPC UA nodes; the Modbus
+sim's HR7+ and C3+ are free to write).
 
 ### Scan the network
 
@@ -254,3 +300,6 @@ with the `agents.view` permission; `agents.manage` can remove them (Computer tab
   no Windows (integrated) sign-in for SQL Server.
 * Sign-in to BIMBA Operations is per organization for **Site agents only**; the other /operations pages are still open (POC).
 * No automatic agent updates: re-run a newer installer over the old one (it keeps the registration).
+* Machine commands: one value per command; no S7, EtherNet/IP, DNP3 (select-before-operate) or IEC 104 commands yet; no
+  Modbus 32-bit / float registers; upstream systems cannot send commands yet (console only). The Windows agent needs a new
+  installer build (1.9) for commands; it has not been tested on Windows yet.

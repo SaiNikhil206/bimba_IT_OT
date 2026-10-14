@@ -38,6 +38,22 @@ final class AgentConfig {
     String hardwareSerial;
     /** disk buffer cap in MB (default 1024; lower it on small SD cards) */
     Integer spoolMaxMb;
+    /**
+     * machine commands from Setu: false = refused here whatever Setu allows (null / true = as Setu permits). Only
+     * `bimba-site-agent writes` changes it; the service reads it from the file before each command.
+     */
+    Boolean allowWrites;
+    /** this copy sets allowWrites (otherwise save() keeps the file's value: the service must not undo the command) */
+    transient boolean writesSet;
+
+    boolean writesAllowed() {
+        return !Boolean.FALSE.equals(allowWrites);
+    }
+
+    void setAllowWrites(boolean on) {
+        allowWrites = on;
+        writesSet = true;
+    }
 
     static boolean exists() {
         return Files.isRegularFile(Paths.configFile());
@@ -60,6 +76,12 @@ final class AgentConfig {
     }
 
     synchronized void save() throws IOException {
+        if (!writesSet) {
+            AgentConfig disk = tryLoad();
+            if (disk != null) {
+                allowWrites = disk.allowWrites;
+            }
+        }
         Files2.privateDir(Paths.configDir());
         Files2.writePrivate(Paths.configFile(), GSON.toJson(this) + "\n");
     }

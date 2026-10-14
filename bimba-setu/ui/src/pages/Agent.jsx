@@ -234,6 +234,14 @@ function Overview({ a, canManage }) {
               {c.spool?.files > 0 && <small className="warnc">{c.spool.files} batch(es) waiting on the computer ({Math.round((c.spool.bytes ?? 0) / 1024)} KB)</small>}
               {c.lastUploadError && <small className="warnc" title={c.lastUploadError}>Upload: {c.lastUploadError}</small>}
             </dd>
+            <dt>Machine commands</dt>
+            <dd>
+              {!atLeast(edge.version, "1.9") ? <span className="muted">Not available (agent before 1.9)</span>
+                : c.writes === "refused" ? <><Status kind="warn">Refused on this computer</Status>
+                  <small className="muted">{linux ? "sudo bimba-site-agent writes on" : "BIMBA-Site-Agent-Setup.exe writes on"} allows them again</small></>
+                  : <><Status>Allowed on this computer</Status>
+                    <small className="muted">For data sources with Allow machine commands, and only their writable tags</small></>}
+            </dd>
           </dl>
         </Card>
         <Card title="Computer" subtitle="The SCADA computer the agent runs on.">
@@ -335,6 +343,7 @@ function RemoveAgent({ a }) {
  * value of each of its tags. Replaces the separate Machines and Live values tabs.
  */
 function LiveData({ a, toSources }) {
+  const at = useOrgPath();
   const kinds = useKinds();
   const { data, error } = usePoll(`agents/${a.id}/live`, 2_000);
   const [q, setQ] = useState("");
@@ -396,7 +405,7 @@ function LiveData({ a, toSources }) {
         const good = sent.filter((v) => v.quality === "GOOD").length;
         return (
           <Card flush key={`${s.id}/${name}`} className={s.enabled ? "" : "off"}
-                title={<span className="ellipsis" title={name}>{name}</span>}
+                title={<Link className="ellipsis mlink" to={at(`/machines/${name}`)} title={`${name}: open its Machines page (pipelines, commands)`}>{name}</Link>}
                 subtitle={<span className="ellipsis" title={`${s.name} · ${target(kinds, s)}`}>from {s.name} · {kindLabel(kinds, s.kind)} · {target(kinds, s)}</span>}
                 action={<div className="m-state">{sent.length && s.enabled && !devices.find((d) => d.name === s.id)?.error
                   ? <><Status kind={good === sent.length ? "good" : "warn"}>{good}/{sent.length} good</Status>
@@ -1216,9 +1225,59 @@ function DeviceList({ devs, onChange }) {
   );
 }
 
-/** a tag uses unit conversion or an engineering range */
-const engineered = (t) => [t.sourceUnit, t.engLow, t.engHigh, t.rawLow, t.rawHigh, t.scaledLow, t.scaledHigh]
+/** a tag uses unit conversion or an engineering range, or takes machine commands */
+const engineered = (t) => t.writable || [t.sourceUnit, t.engLow, t.engHigh, t.rawLow, t.rawHigh, t.scaledLow, t.scaledHigh]
   .some((v) => v !== undefined && v !== null && String(v).trim() !== "");
+
+/** what a writable tag takes (same rule as Setu, AgentSources.writeKind): on / off, text or a number with limits */
+export function writeKind(kind, t) {
+  const dt = String(t.dataType ?? "").trim().toLowerCase();
+  if ((kind === "modbus" && /^(\d+\.)?C\d+$/i.test(String(t.address ?? "").trim())) || dt === "boolean" || dt === "bool") return "boolean";
+  return dt === "string" || dt === "text" ? "text" : "number";
+}
+
+/** the machine command settings of one tag (shown for source types that take commands) */
+function TagWrites({ kd, get, t, upd }) {
+  const kind = kd.id;
+  const readOnlyModbus = kind === "modbus" && /^(\d+\.)?(IR|DI)\d+$/i.test(String(t.address ?? "").trim());
+  const takes = writeKind(kind, t);
+  const on = get("writes") === true || get("writes") === "true";
+  return (
+    <div className="tag-writes">
+      <label className="check">
+        <input type="checkbox" checked={!!t.writable} disabled={readOnlyModbus && !t.writable}
+               onChange={(e) => upd("writable", e.target.checked)} />
+        <span>Writable: people with the Send machine commands permission can set this tag</span>
+      </label>
+      {readOnlyModbus && <p className="hint">Input registers (IR) and discrete inputs (DI) are read only in Modbus.</p>}
+      {t.writable && (
+        <>
+          {takes === "number" && (
+            <>
+              <label><span>Lowest value</span>
+                <input type="number" step="any" value={t.writeMin ?? ""} onChange={(e) => upd("writeMin", e.target.value)} placeholder="required" /></label>
+              <label><span>Highest value</span>
+                <input type="number" step="any" value={t.writeMax ?? ""} onChange={(e) => upd("writeMax", e.target.value)} placeholder="required" /></label>
+            </>
+          )}
+          {kind === "mqtt" && (
+            <label className="span2"><span>Command topic (optional)</span>
+              <input type="text" className="mono" value={t.writeAddress ?? ""} onChange={(e) => upd("writeAddress", e.target.value)}
+                     placeholder={get("payload") === "sparkplug" ? "the metric itself (NCMD / DCMD)" : `${t.address || "topic"} (the tag's own topic)`} /></label>
+          )}
+          <label className="check span2">
+            <input type="checkbox" checked={!!t.writeApproval} onChange={(e) => upd("writeApproval", e.target.checked)} />
+            <span>A second person approves each command</span>
+          </label>
+          <p className="hint">
+            {takes === "boolean" ? "Takes on / off. " : takes === "text" ? "Takes text. " : "In the tag's unit, as shown (scaling and unit conversion are undone before writing). "}
+            {!on && "Commands also need Allow machine commands in this data source's Advanced settings."}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 function TagTable({ kd, get, tags, onChange, onBrowse }) {
   const [more, setMore] = useState(() => new Set());       // rows whose unit / range settings are open
@@ -1257,7 +1316,9 @@ function TagTable({ kd, get, tags, onChange, onBrowse }) {
                 <input type="text" aria-label="Unit" value={t.unit ?? ""} onChange={(e) => upd(i, "unit", e.target.value)} placeholder="unit" />
                 <div className="row-acts">
                   <button className={`btn ghost sm${engineered(t) ? " on" : ""}`} aria-expanded={more.has(i)} onClick={() => toggle(i)}
-                          aria-label={`Unit and range of ${t.name || t.address}`} title="Unit conversion and engineering range">⋯</button>
+                          aria-label={`Unit and range of ${t.name || t.address}`}
+                          title={kd.writes ? "Unit conversion, engineering range and machine commands" : "Unit conversion and engineering range"}>
+                    {t.writable ? "✎" : "⋯"}</button>
                   <button className="btn ghost sm" aria-label={`Remove ${t.name || t.address}`} onClick={() => del(i)}>✕</button>
                 </div>
               </div>
@@ -1282,6 +1343,7 @@ function TagTable({ kd, get, tags, onChange, onBrowse }) {
                   <p className="hint">Device unit: the unit the device reports in (e.g. degF); values are converted to the tag's unit.
                     Outside the range, readings are sent with quality UNCERTAIN. Scaling (all four): raw low–high becomes scaled low–high,
                     e.g. counts 0–32767 to 0–100, before the unit conversion.</p>
+                  {kd.writes && <TagWrites kd={kd} get={get} t={t} upd={(k, v) => upd(i, k, v)} />}
                 </div>
               )}
             </div>

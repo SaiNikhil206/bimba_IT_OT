@@ -31,6 +31,8 @@ import java.util.concurrent.TimeUnit;
  *       rawLow,rawHigh,scaledLow,scaledHigh,sourceUnit,engLow,engHigh}],pollMs,enabled}]}
  *      (a tag's machine: it reports as that machine instead of the source's name, so one connection feeds several machines)
  *      {"op":"test"|"browse"|"scan"|"read","id":..,"source":{kind,settings},"nodeId":..,"limit":..,"tags":[..]}
+ *      {"op":"write","id":..,"source":{kind,settings},"tag":{..},"value":..}   machine command (the agent service
+ *       checks first that this computer allows commands)
  * out  {"type":"reading","m":{canonical message}}       every change of value or quality (docs/payload.md)
  *      {"type":"result","id":..,"ok":true,"result":{..}} / {"type":"result","id":..,"ok":false,"error":".."}
  *      {"type":"status","devices":[..]}                  every 10 s
@@ -100,7 +102,7 @@ public final class EdgeMain {
             String op = EdgeEngine.str(msg, "op");
             switch (op == null ? "" : op) {
                 case "config" -> engine.configure(msg);
-                case "test", "browse", "scan", "read", "netscan" -> work.execute(() -> command(op, msg));
+                case "test", "browse", "scan", "read", "netscan", "write" -> work.execute(() -> command(op, msg));
                 case "stop" -> {
                     engine.stop();
                     System.exit(0);

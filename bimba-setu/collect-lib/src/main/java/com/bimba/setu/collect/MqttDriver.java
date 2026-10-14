@@ -36,7 +36,8 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * MQTT broker as a data source (subscribe only). The driver keeps the latest value of every tag it was asked for; the
+ * MQTT broker as a data source (subscribe only; machine commands publish through {@link #write}, on their own
+ * connection). The driver keeps the latest value of every tag it was asked for; the
  * collector samples them at the source's read rate (so only changes are sent, like the polled protocols).
  * <p>
  * Settings: url (tcp:// | ssl:// | mqtt:// | mqtts:// | ws:// | wss://), clientId (default bimba-&lt;host&gt;-&lt;random&gt;),
@@ -586,6 +587,154 @@ public final class MqttDriver implements Driver {
         } finally {
             d.close();
         }
+    }
+
+    /**
+     * Publishes one value to the machine (a command, not retained) and waits up to {@code confirmMs} for the tag to report
+     * it: {before, after, confirmed (null = no separate confirmation possible), topic}. The command goes to
+     * {@code writeAddress} (a topic, or topic#field for JSON messages) or else to the tag's own address; Sparkplug B
+     * metrics get an NCMD (edge node) or DCMD (device) with the metric's name. A command published on the topic the tag
+     * is read from cannot be confirmed: the broker hands the command itself back.
+     */
+    public static Map<String, Object> write(JsonObject settings, TagModel.Tag tag, String writeAddress, Object raw, long confirmMs)
+            throws Exception {
+        MqttDriver d = new MqttDriver(settings, "-w" + Integer.toString(new SecureRandom().nextInt(1296), 36), false);
+        try {
+            List<TagModel.Tag> tags = List.of(tag);
+            d.read(tags);                                        // connects and subscribes to the tag
+            Thread.sleep(300);                                   // a retained value arrives at once
+            Object before = d.read(tags).get(0).value();
+            String target = writeAddress == null || writeAddress.isBlank() ? tag.address() : writeAddress.trim();
+            String topic;
+            byte[] payload;
+            switch (d.format) {
+                case SPARKPLUG -> {
+                    int h = target.indexOf('#');
+                    String[] p = h > 0 ? target.substring(0, h).split("/") : new String[0];
+                    if (p.length < 2 || p.length > 3 || h == target.length() - 1) {
+                        throw new Exception("Sparkplug address " + target + ": group/edge node[/device]#metric");
+                    }
+                    topic = p.length == 2 ? SPB + "/" + p[0] + "/NCMD/" + p[1] : SPB + "/" + p[0] + "/DCMD/" + p[1] + "/" + p[2];
+                    long now = System.currentTimeMillis();
+                    int type = sparkplugType(tag.dataType(), raw);
+                    Object v = switch (type) {
+                        case SparkplugB.BOOLEAN -> Writer.bool(raw);
+                        case SparkplugB.STRING -> text(raw);
+                        case SparkplugB.DOUBLE, SparkplugB.FLOAT -> {
+                            if (!(raw instanceof Number)) {
+                                throw new Exception("metric " + target + " takes a number");
+                            }
+                            yield raw;
+                        }
+                        default -> {
+                            if (!(raw instanceof Number n)) {
+                                throw new Exception("metric " + target + " takes a whole number");
+                            }
+                            yield Math.round(n.doubleValue());
+                        }
+                    };
+                    payload = SparkplugB.encode(now, null, List.of(new SparkplugB.Metric(target.substring(h + 1), null, now, type, false, v)));
+                }
+                case JSON -> {
+                    int h = target.indexOf('#');
+                    topic = h < 0 ? target : target.substring(0, h);
+                    payload = jsonCommand(h < 0 ? "" : target.substring(h + 1), raw).getBytes(StandardCharsets.UTF_8);
+                }
+                default -> {
+                    topic = target;
+                    payload = text(raw).getBytes(StandardCharsets.UTF_8);
+                }
+            }
+            if (topic.isEmpty() || topic.contains("+") || topic.contains("#")) {
+                throw new Exception("MQTT command topic " + topic + ": an exact topic (no + or # wildcards)");
+            }
+            MqttClient c;
+            synchronized (d) {
+                c = d.client;
+            }
+            if (c == null || !c.isConnected()) {
+                throw new Exception("not connected to " + d.url);
+            }
+            c.publish(topic, payload, d.qos, false);
+            boolean echo = d.format != Format.SPARKPLUG && topic.equals(d.format == Format.JSON && tag.address().contains("#")
+                    ? tag.address().substring(0, tag.address().indexOf('#')) : tag.address());
+            Object after = before;
+            Boolean confirmed = null;
+            if (!echo) {
+                long until = System.currentTimeMillis() + Math.max(0, confirmMs);
+                confirmed = false;
+                do {
+                    Reading r = d.read(tags).get(0);
+                    after = r.value();
+                    if (r.good() && Writer.same(raw, after)) {
+                        confirmed = true;
+                        break;
+                    }
+                    Thread.sleep(200);
+                } while (System.currentTimeMillis() < until);
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("before", before);
+            m.put("after", after);
+            m.put("confirmed", confirmed);
+            m.put("topic", topic);
+            m.put("target", d.describe());
+            return m;
+        } finally {
+            d.close();
+        }
+    }
+
+    /** the Sparkplug data type for the tag's dataType (int16, int32, int64, float, double, boolean, string), else by value */
+    static int sparkplugType(String dataType, Object raw) {
+        String t = dataType == null ? "" : dataType.trim().toLowerCase(Locale.ROOT);
+        return switch (t) {
+            case "int8" -> SparkplugB.INT8;
+            case "int16" -> SparkplugB.INT16;
+            case "int32", "int", "integer" -> SparkplugB.INT32;
+            case "int64", "long" -> SparkplugB.INT64;
+            case "uint8" -> SparkplugB.UINT8;
+            case "uint16" -> SparkplugB.UINT16;
+            case "uint32" -> SparkplugB.UINT32;
+            case "uint64" -> SparkplugB.UINT64;
+            case "float", "float4", "real" -> SparkplugB.FLOAT;
+            case "double", "float8" -> SparkplugB.DOUBLE;
+            case "boolean", "bool" -> SparkplugB.BOOLEAN;
+            case "string", "text" -> SparkplugB.STRING;
+            default -> raw instanceof Boolean ? SparkplugB.BOOLEAN : raw instanceof Number ? SparkplugB.DOUBLE : SparkplugB.STRING;
+        };
+    }
+
+    /** {"a":{"b":42}} for field path a.b (no arrays); the bare value for an empty path */
+    static String jsonCommand(String path, Object raw) throws Exception {
+        JsonElement v = raw instanceof Boolean b ? new com.google.gson.JsonPrimitive(b)
+                : raw instanceof Number n ? new com.google.gson.JsonPrimitive(whole(n.doubleValue()) ? (Number) (long) n.doubleValue() : n)
+                : new com.google.gson.JsonPrimitive(String.valueOf(raw));
+        if (path.isBlank()) {
+            return v.toString();
+        }
+        if (path.contains("[")) {
+            throw new Exception("JSON command field " + path + ": arrays cannot be written (use a field path like motor.speed)");
+        }
+        String[] parts = path.split("\\.");
+        for (int i = parts.length - 1; i >= 0; i--) {
+            if (parts[i].isBlank()) {
+                throw new Exception("JSON command field " + path + ": an empty name");
+            }
+            JsonObject o = new JsonObject();
+            o.add(parts[i], v);
+            v = o;
+        }
+        return v.toString();
+    }
+
+    /** 42.0 -> "42", 21.5 -> "21.5", true -> "true" */
+    static String text(Object raw) {
+        return raw instanceof Number n && whole(n.doubleValue()) ? String.valueOf((long) n.doubleValue()) : String.valueOf(raw);
+    }
+
+    private static boolean whole(double d) {
+        return d == Math.rint(d) && !Double.isInfinite(d) && Math.abs(d) < 1e15;
     }
 
     /**

@@ -4,6 +4,7 @@ import com.bimba.setu.SetuService;
 import com.bimba.setu.Json;
 import com.bimba.setu.canonical.QuarantineSettings;
 import com.bimba.setu.canonical.TagRegistry;
+import com.bimba.setu.delivery.Selection;
 import com.bimba.setu.security.SecurityService.ApiException;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -112,6 +113,61 @@ public class PipelineService {
         m.put("source", status.get("destinationSource"));
         m.put("problems", status.get("destinationProblems"));
         return m;
+    }
+
+    /** A pipeline as the Machines page needs it: which machines and tags it takes, where it delivers, how it is doing. */
+    public record Carrier(long id, String uid, String name, boolean active, boolean allMachines, Selection selection,
+                          List<String> destinations, Map<String, Object> live) {
+        /** how many of the machine's tags (collected names) the pipeline takes; 0 = it does not carry the machine */
+        public int carried(String machine, java.util.Collection<String> tags) {
+            if (!selection.machine(machine)) {
+                return 0;
+            }
+            return (int) tags.stream().filter(t -> selection.matches(machine, t)).count();
+        }
+    }
+
+    /** every pipeline of the organization (active or paused), with its selection and destinations' names */
+    @SuppressWarnings("unchecked")
+    public synchronized List<Carrier> carriers(long orgId) {
+        Map<Long, Map<String, Object>> live = new LinkedHashMap<>();
+        Map<String, Object> status = setu.status();
+        if (status.get("delivery") instanceof Map<?, ?> d && d.get("pipelines") instanceof List<?> l) {
+            for (Object o : l) {
+                Map<String, Object> p = (Map<String, Object>) o;
+                live.put(((Number) p.get("id")).longValue(), p);
+            }
+        }
+        Map<Long, String> names = new LinkedHashMap<>();
+        for (JsonObject d : store.list(orgId)) {
+            names.put(d.get("id").getAsLong(), Json.str(d, "name"));
+        }
+        List<Carrier> out = new ArrayList<>();
+        for (JsonObject p : store.pipelines(orgId)) {
+            JsonObject m = p.has("machines") && p.get("machines").isJsonObject() ? p.getAsJsonObject("machines") : new JsonObject();
+            List<String> machines = new ArrayList<>();
+            boolean selected = "selected".equals(Json.str(m, "mode")) && m.has("names");
+            if (selected) {
+                m.getAsJsonArray("names").forEach(n -> machines.add(n.getAsString()));
+            }
+            JsonObject t = p.has("tags") && p.get("tags").isJsonObject() ? p.getAsJsonObject("tags") : new JsonObject();
+            List<String> include = new ArrayList<>(), exclude = new ArrayList<>();
+            if ("patterns".equals(Json.str(t, "mode"))) {
+                array(t, "include").forEach(e -> include.add(e.getAsString()));
+                array(t, "exclude").forEach(e -> exclude.add(e.getAsString()));
+            }
+            List<String> to = new ArrayList<>();
+            if (p.has("primary") && !p.get("primary").isJsonNull()) {
+                to.add(names.getOrDefault(p.get("primary").getAsLong(), "#" + p.get("primary").getAsLong()));
+            }
+            for (String k : List.of("secondary", "mirrors")) {
+                ids(p, k).forEach(id -> to.add(names.getOrDefault(id, "#" + id)));
+            }
+            long id = p.get("id").getAsLong();
+            out.add(new Carrier(id, Json.str(p, "uid"), Json.str(p, "name"), p.get("active").getAsBoolean(), !selected,
+                    new Selection(machines, include, exclude), to, live.get(id)));
+        }
+        return out;
     }
 
     /** Adds (id null) or replaces a pipeline; returns {id, name}. */

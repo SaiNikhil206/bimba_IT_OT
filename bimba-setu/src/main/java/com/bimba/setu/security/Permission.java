@@ -13,6 +13,9 @@ public enum Permission {
     AGENTS_VIEW("agents.view", "Site agents", "See the organization's site agents"),
     AGENTS_MANAGE("agents.manage", "Site agents", "Revoke the organization's site agents"),
     DELIVERY_MANAGE("delivery.manage", "Delivery", "Add, edit and remove the organization's destinations and pipelines"),
+    WRITES_SEND("writes.send", "Machine commands", "Write values to machines (only tags marked writable, within their limits)"),
+    WRITES_APPROVE("writes.approve", "Machine commands", "Approve or reject commands that need a second person"),
+    WRITES_MANAGE("writes.manage", "Machine commands", "Resume machine commands after they were stopped (anyone who may send or approve can stop them)"),
     USERS_MANAGE("users.manage", "Administration", "Add and remove members, assign their roles, reset passwords"),
     ROLES_MANAGE("roles.manage", "Administration", "Create and edit the organization's own roles"),
     AUDIT_VIEW("audit.view", "Administration", "Read the organization's audit log");

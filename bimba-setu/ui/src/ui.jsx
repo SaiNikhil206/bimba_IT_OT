@@ -285,11 +285,12 @@ export function ToastProvider({ children }) {
 
 export const useToast = () => useContext(ToastContext);
 
-/** GET path now and every `ms` (as background refreshes). Returns { data, error, reload }. */
+/** GET path now and every `ms` (as background refreshes); a null path loads nothing (yet). Returns { data, error, reload }. */
 export function usePoll(path, ms) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const load = useCallback(async (background) => {
+    if (!path) return;
     try {
       setData(await api(path, { background }));
       setError(null);

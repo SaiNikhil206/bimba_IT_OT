@@ -63,6 +63,12 @@ public final class SourceKinds {
         return KINDS.keySet();
     }
 
+    /** the type's name for people ("Modbus TCP"), or the id */
+    public static String label(String kind) {
+        JsonObject k = kind == null ? null : KINDS.get(kind);
+        return k == null ? kind : k.get("label").getAsString();
+    }
+
     /** "OPC UA, Modbus TCP, ... or OPC DA" */
     public static String names() {
         List<String> n = KINDS.values().stream().map(k -> k.get("label").getAsString()).toList();

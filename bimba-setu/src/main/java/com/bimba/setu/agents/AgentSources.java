@@ -179,10 +179,14 @@ public class AgentSources {
         return result;
     }
 
+    /** a machine command not picked up this soon is never handed out (a late setpoint is worse than none) */
+    public static final int WRITE_TTL_SECONDS = 15;
+
     private Map<String, Object> claim(UUID agentId, boolean secure) {
         return db.sql("UPDATE {s}.bimba_agent_command SET state = 'sent', sent_at = now() WHERE id = ("
                         + " SELECT id FROM {s}.bimba_agent_command WHERE agent_id = ? AND state = 'pending'"
-                        + " AND created_at > now() - interval '60 seconds' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
+                        + " AND created_at > now() - CASE WHEN kind = 'write' THEN interval '" + WRITE_TTL_SECONDS + " seconds'"
+                        + " ELSE interval '60 seconds' END ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                         + " RETURNING id, kind, request::text")
                 .param(agentId)
                 .query((rs, n) -> {
@@ -207,18 +211,38 @@ public class AgentSources {
         return req.toString();
     }
 
-    /** POST /system/bimba-agent-commands/{id}/result body {ok, result | error} */
+    /**
+     * POST /system/bimba-agent-commands/{id}/result body {ok, result | error, refusedBy?}. A machine command's answer
+     * is kept even after the command expired: once handed out, the machine may have been written.
+     */
     public Map<String, Object> commandResult(AgentRegistry.Caller caller, String commandId, JsonObject body) throws AgentRegistry.ApiError {
         AgentRegistry.Agent a = registry.authenticate(caller);
         boolean ok = body.has("ok") && body.get("ok").getAsBoolean();
         String error = ok ? "" : AgentRegistry.str(body, "error", 4000);
         JsonElement result = body.get("result");
-        int n = db.sql("UPDATE {s}.bimba_agent_command SET state = ?, result = ?::jsonb, error = ?, done_at = now()"
-                        + " WHERE id = ? AND agent_id = ? AND state IN ('pending', 'sent')")
+        if (!ok && "computer".equals(AgentRegistry.str(body, "refusedBy", 20))) {
+            JsonObject r = new JsonObject();
+            r.addProperty("refusedBy", "computer");
+            result = r;
+        }
+        UUID id = uuid(commandId);
+        List<String> kinds = db.sql("UPDATE {s}.bimba_agent_command SET state = ?, result = ?::jsonb, error = ?, done_at = now()"
+                        + " WHERE id = ? AND agent_id = ? AND (state IN ('pending', 'sent')"
+                        + " OR kind = 'write' AND state = 'expired' AND sent_at IS NOT NULL AND done_at IS NULL) RETURNING kind")
                 .params(ok ? "done" : "failed", result == null || result.isJsonNull() ? null : result.toString(),
-                        error == null ? "" : error, uuid(commandId), a.id())
-                .update();
-        return Map.of("ok", n > 0);
+                        error == null ? "" : error, id, a.id())
+                .query(String.class).list();
+        if (kinds.contains("write") && writeDone != null) {
+            writeDone.accept(id);
+        }
+        return Map.of("ok", !kinds.isEmpty());
+    }
+
+    /** told when a machine command was answered (MachineCommands audits it) */
+    private volatile java.util.function.Consumer<UUID> writeDone;
+
+    public void onWriteDone(java.util.function.Consumer<UUID> listener) {
+        writeDone = listener;
     }
 
     /**
@@ -605,12 +629,18 @@ public class AgentSources {
 
     private UUID queue(UUID agent, long orgId, String kind, JsonObject req, String actor) {
         UUID id = UUID.randomUUID();
-        db.sql("DELETE FROM {s}.bimba_agent_command WHERE created_at < now() - interval '1 day'").update();
+        purge();
         db.sql("INSERT INTO {s}.bimba_agent_command (id, org_id, agent_id, kind, request, state, created_at, created_by)"
                         + " VALUES (?, ?, ?, ?, ?::jsonb, 'pending', now(), ?)")
                 .params(id, orgId, agent, kind, req.toString(), actor).update();
         wake(agent);
         return id;
+    }
+
+    /** console requests are kept a day; machine commands 90 days (their history page; the audit log keeps them for good) */
+    void purge() {
+        db.sql("DELETE FROM {s}.bimba_agent_command WHERE created_at < now() - interval '1 day'"
+                + " AND (kind <> 'write' OR created_at < now() - interval '90 days')").update();
     }
 
     /** tells a waiting agent to fetch its data sources now (instead of at its next heartbeat) */
@@ -622,7 +652,8 @@ public class AgentSources {
         wake(agent);
     }
 
-    private void wake(UUID agent) {
+    /** hands a queued command to the agent's waiting long-poll, if there is one */
+    void wake(UUID agent) {
         Poll w = waiting.remove(agent);
         if (w != null) {
             Map<String, Object> cmd = claim(agent, w.secure());
@@ -1239,9 +1270,103 @@ public class AgentSources {
             if (why != null) {
                 throw new ApiException(400, "tags", "Tag \"" + clean.get("name").getAsString() + "\": " + why + ".");
             }
+            writeSettings(t, clean, kind, b);
             out.add(clean);
         }
         return out;
+    }
+
+    /**
+     * A tag's machine command settings (MachineCommands): writable, writeMin / writeMax (engineering values, required for
+     * a number), writeApproval (a second person approves each command), writeAddress (MQTT: the command topic, when it
+     * is not the tag's own). Only OPC UA, Modbus holding registers and coils, and MQTT take commands.
+     */
+    static void writeSettings(JsonObject t, JsonObject clean, String kind, JsonObject b) throws ApiException {
+        boolean writable = t.has("writable") && t.get("writable").isJsonPrimitive() && t.get("writable").getAsBoolean();
+        if (!writable) {
+            return;
+        }
+        String name = clean.get("name").getAsString();
+        if (!com.bimba.setu.collect.Writer.writable(kind)) {
+            throw new ApiException(400, "tags", "Tag \"" + name + "\": only OPC UA, Modbus and MQTT tags can be written.");
+        }
+        String address = clean.get("address").getAsString().toUpperCase(Locale.ROOT);
+        if ("modbus".equals(kind) && !address.matches("^(?:\\d+\\.)?(HR|C)\\d+$")) {
+            throw new ApiException(400, "tags", "Tag \"" + name + "\": in Modbus only holding registers (HR) and coils (C) can be written.");
+        }
+        clean.addProperty("writable", true);
+        if (writeKind(kind, clean).equals("number")) {
+            Double lo = null, hi = null;
+            for (String k : List.of("writeMin", "writeMax")) {
+                if (t.has(k) && t.get(k).isJsonPrimitive() && !t.get(k).getAsString().isBlank()) {
+                    try {
+                        double v = Double.parseDouble(t.get(k).getAsString());
+                        if (Double.isNaN(v) || Double.isInfinite(v)) {
+                            throw new NumberFormatException(k);
+                        }
+                        clean.addProperty(k, v);
+                        if (k.equals("writeMin")) {
+                            lo = v;
+                        } else {
+                            hi = v;
+                        }
+                    } catch (NumberFormatException ex) {
+                        throw new ApiException(400, "tags", "The write limits of \"" + name + "\" must be numbers.");
+                    }
+                }
+            }
+            if (lo == null || hi == null) {
+                throw new ApiException(400, "tags", "Tag \"" + name + "\" is writable: enter the lowest and highest value it may be set to.");
+            }
+            if (lo > hi) {
+                throw new ApiException(400, "tags", "Write limits of \"" + name + "\": the lowest value is above the highest.");
+            }
+        }
+        if (t.has("writeApproval") && t.get("writeApproval").isJsonPrimitive() && t.get("writeApproval").getAsBoolean()) {
+            clean.addProperty("writeApproval", true);
+        }
+        String wa = Json.str(t, "writeAddress");
+        if ("mqtt".equals(kind) && wa != null && !wa.isBlank()) {
+            if (wa.length() > 500) {
+                throw new ApiException(400, "tags", "Command topic of \"" + name + "\": at most 500 characters.");
+            }
+            JsonObject st = b.has("settings") && b.get("settings").isJsonObject() ? b.getAsJsonObject("settings") : new JsonObject();
+            mqttAddress(Json.str(st, "payload"), wa);
+            if (wa.contains("[")) {
+                throw new ApiException(400, "tags", "Command topic of \"" + name + "\": a JSON field path without arrays (motor.speed).");
+            }
+            clean.addProperty("writeAddress", wa.trim());
+        }
+    }
+
+    /** what a writable tag takes: "boolean" (coils, dataType boolean), "text" (dataType string) or "number" */
+    static String writeKind(String kind, JsonObject t) {
+        String dt = Json.str(t, "dataType");
+        dt = dt == null ? "" : dt.trim().toLowerCase(Locale.ROOT);
+        String address = Json.str(t, "address");
+        if ("modbus".equals(kind) && address != null && address.trim().toUpperCase(Locale.ROOT).matches("^(?:\\d+\\.)?C\\d+$")
+                || dt.equals("boolean") || dt.equals("bool")) {
+            return "boolean";
+        }
+        return dt.equals("string") || dt.equals("text") ? "text" : "number";
+    }
+
+    // ================================================================== machine commands (MachineCommands)
+
+    /** a data source of the organization (stored settings, password sealed), or null */
+    JsonObject sourceOf(String sourceId, long orgId) {
+        return sameOrgSource(sourceId, orgId);
+    }
+
+    /** every data source of the organization */
+    List<JsonObject> sourcesOf(long orgId) {
+        return rows("WHERE s.org_id = ? ORDER BY s.name", orgId);
+    }
+
+    /** the last reading of machine / tag the agent sent since Setu started, or null */
+    JsonObject lastReading(UUID agent, String machine, String tag) {
+        Map<String, JsonObject> last = live.get(agent);
+        return last == null ? null : last.get(machine + "/" + tag);
     }
 
     /** why a tag's unit conversion / engineering range cannot work, null when it can */

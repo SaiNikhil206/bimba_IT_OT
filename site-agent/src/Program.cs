@@ -32,6 +32,7 @@ namespace Bimba.SiteAgent
   BIMBA-Site-Agent-Setup.exe install --server <gateway> --email <e-mail> [--org <slug>] [--password-stdin] [options]
   BIMBA-Site-Agent-Setup.exe uninstall [--quiet]
   BIMBA-Site-Agent-Setup.exe status | inventory
+  BIMBA-Site-Agent-Setup.exe writes [on | off]      machine commands from Setu on this machine (off = always refused)
   BIMBA-Site-Agent-Setup.exe test --server <gateway> (--token <t> | --email <e-mail> ...)
   For Intune / SCCM / Group Policy use BIMBA-Site-Agent.msi:
     msiexec /i BIMBA-Site-Agent.msi /qn SERVER=<gateway> TOKEN=<enrollment token> [SITE=<site>] [TRUSTCERT=<sha256>]
@@ -62,7 +63,8 @@ namespace Bimba.SiteAgent
             Log.Console = true;
             try
             {
-                var opt = Options(args.Skip(1).ToArray());
+                // writes on | off: a word, no options
+                var opt = cmd == "writes" ? new Dictionary<string, string>() : Options(args.Skip(1).ToArray());
                 switch (cmd)
                 {
                     case "install": return Install(opt, Mode.Install);
@@ -87,6 +89,7 @@ namespace Bimba.SiteAgent
                         Console.WriteLine("BIMBA Site Agent removed.");
                         return 0;
                     case "status": return Status();
+                    case "writes": return Writes(args.Length > 1 ? args[1].ToLowerInvariant() : null);
                     case "inventory":
                         Console.WriteLine(Json.Pretty(Inventory.Collect(opt.TryGetValue("server", out var s) ? s : null)));
                         return 0;
@@ -276,12 +279,39 @@ namespace Bimba.SiteAgent
                 Console.WriteLine($"agent id:     {cfg.AgentId}");
                 Console.WriteLine($"sign-in:      {(cfg.CertThumbprint != null ? $"client certificate {cfg.CertThumbprint} (valid until {cfg.CertNotAfter})" : "agent secret (the service asks for a certificate over HTTPS)")}");
                 Console.WriteLine($"enrolled:     {cfg.EnrolledAt}");
+                Console.WriteLine($"commands:     {(cfg.WritesAllowed ? "allowed (as Setu permits)" : "refused on this machine (writes on)")}");
             }
             else if (!Installer.IsElevated)
             {
                 Console.WriteLine("configuration: run from an elevated prompt to read it");
             }
             Console.WriteLine($"log:          {Log.FilePath}");
+            return 0;
+        }
+
+        /// <summary>
+        /// Machine commands (values Setu writes to the machines) on this machine: shows the setting, or turns it on / off.
+        /// Off wins over every setting in Setu; the service reads it before each command (no restart needed).
+        /// </summary>
+        private static int Writes(string to)
+        {
+            if (to != null && !Installer.IsElevated) return NotElevated();
+            var cfg = AgentConfig.TryLoad();
+            if (cfg == null)
+            {
+                Console.Error.WriteLine(AgentConfig.Exists ? "error: run from an elevated prompt to read the configuration" : "error: BIMBA Site Agent is not installed.");
+                return 1;
+            }
+            if (to == null)
+            {
+                Console.WriteLine(cfg.WritesAllowed ? "on: machine commands from Setu are carried out (as Setu permits)"
+                    : "off: machine commands from Setu are refused on this machine");
+                return 0;
+            }
+            if (to != "on" && to != "off") throw new ArgumentException("writes on | off");
+            cfg.SetAllowWrites(to == "on");
+            cfg.Save();
+            Console.WriteLine("Machine commands " + (to == "on" ? "allowed" : "refused") + " on this machine.");
             return 0;
         }
 

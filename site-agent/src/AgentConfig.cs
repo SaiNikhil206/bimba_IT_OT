@@ -59,6 +59,21 @@ namespace Bimba.SiteAgent
         /// <summary>thumbprint of the client certificate in the service account's personal store, or null</summary>
         public string CertThumbprint { get; set; }
         public string CertNotAfter { get; set; }
+        /// <summary>
+        /// Machine commands from Setu: false = refused on this machine whatever Setu allows (null / true = as Setu
+        /// permits). Only "writes on|off" changes it; the service reads the file before each command.
+        /// </summary>
+        public bool? AllowWrites { get; set; }
+        /// <summary>this copy sets AllowWrites (otherwise Save keeps the file's value: the service must not undo the command)</summary>
+        private bool writesSet;
+
+        public bool WritesAllowed => AllowWrites != false;
+
+        public void SetAllowWrites(bool on)
+        {
+            AllowWrites = on;
+            writesSet = true;
+        }
 
         /// <summary>null once the agent signs in with its certificate</summary>
         public string Secret
@@ -91,13 +106,18 @@ namespace Bimba.SiteAgent
 
         public void Save()
         {
+            if (!writesSet)
+            {
+                var disk = TryLoad();
+                if (disk != null) AllowWrites = disk.AllowWrites;
+            }
             Directory.CreateDirectory(Paths.DataDir);
             var map = new Dictionary<string, object>
             {
                 ["Server"] = Server, ["AgentId"] = AgentId, ["SecretProtected"] = SecretProtected,
                 ["OrgSlug"] = OrgSlug, ["OrgName"] = OrgName, ["DisplayName"] = DisplayName, ["Site"] = Site,
                 ["HeartbeatSeconds"] = HeartbeatSeconds, ["PinnedCertSha256"] = PinnedCertSha256, ["EnrolledAt"] = EnrolledAt,
-                ["CertThumbprint"] = CertThumbprint, ["CertNotAfter"] = CertNotAfter,
+                ["CertThumbprint"] = CertThumbprint, ["CertNotAfter"] = CertNotAfter, ["AllowWrites"] = AllowWrites,
             };
             string tmp = Paths.ConfigFile + ".tmp";
             File.WriteAllText(tmp, Json.Pretty(map), new UTF8Encoding(false));

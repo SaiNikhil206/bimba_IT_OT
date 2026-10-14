@@ -10,6 +10,7 @@ import Destinations from "./pages/Destinations.jsx";
 import Quarantine from "./pages/Quarantine.jsx";
 import Registry from "./pages/Registry.jsx";
 import Agents from "./pages/Agents.jsx";
+import Machines from "./pages/Machines.jsx";
 import Tokens from "./pages/Tokens.jsx";
 import Users from "./pages/Users.jsx";
 import Roles from "./pages/Roles.jsx";
@@ -29,6 +30,7 @@ import Organizations from "./pages/Organizations.jsx";
 const PAGES = [
   { path: "/overview", label: "Overview", icon: "◎", perm: ["gateway.view"], element: <Overview /> },
   { path: "/agents", records: true, label: "Site agents", icon: "⌂", perm: ["agents.view"], element: <Agents /> },
+  { path: "/machines", records: true, label: "Machines", icon: "▣", perm: ["gateway.view", "agents.view", "writes.send", "writes.approve", "writes.manage"], element: <Machines /> },
   { path: "/registry", label: "Tag registry", icon: "▤", perm: ["gateway.view"], element: <Registry /> },
   { path: "/pipelines", records: true, label: "Pipelines", icon: "⇉", perm: ["gateway.view"], group: "Delivery", element: <Pipelines /> },
   { path: "/destinations", records: true, label: "Destinations", icon: "◇", perm: ["gateway.view"], group: "Delivery", element: <Destinations /> },
@@ -42,7 +44,7 @@ const PAGES = [
 
 /** first segments that are not an organization: pages of no organization, and the old addresses without one */
 const GLOBAL = new Set(["profile", ...PAGES.filter((p) => p.platform).map((p) => p.path.slice(1))]);
-const ORG_PAGES = new Set([...PAGES.filter((p) => !p.platform).map((p) => p.path.slice(1)), "delivery"]);
+const ORG_PAGES = new Set([...PAGES.filter((p) => !p.platform).map((p) => p.path.slice(1)), "delivery", "commands"]);
 
 export default function App() {
   const s = useSession();
@@ -152,6 +154,7 @@ function Shell() {
             {denied.map((p) => <Route key={p.path} path={route(p)} element={<NoAccess page={p} home={home} />} />)}
             <Route path="/profile" element={<Profile />} />
             <Route path="/:org/delivery" element={<Navigate to={at("/pipelines")} replace />} />
+            <Route path="/:org/commands/*" element={<CommandsMoved />} />
             <Route path="*" element={<Moved home={home} />} />
           </Routes>
           )}
@@ -233,6 +236,12 @@ function Moved({ home }) {
   q.delete("org");
   const rest = q.toString();
   return <Navigate to={`/${org}${pathname}${rest ? `?${rest}` : ""}${hash}`} replace />;
+}
+
+/** Machine commands became Machines: /<org>/commands[/<machine>] -> /<org>/machines[/<machine>] */
+function CommandsMoved() {
+  const { pathname, search } = useLocation();
+  return <Navigate to={`${pathname.replace(/\/commands(\/|$)/, "/machines$1")}${search}`} replace />;
 }
 
 /** a page this user's roles do not allow here (opened from a shared link or a bookmark) */

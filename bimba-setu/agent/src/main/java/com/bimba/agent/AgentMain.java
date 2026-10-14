@@ -27,6 +27,7 @@ public final class AgentMain {
               bimba-site-agent install --server <setu> --email <e-mail> [--org <slug>] [--password-stdin] [options]
               bimba-site-agent test --server <setu> (--token <t> | --email <e-mail> ...)   check, install nothing
               bimba-site-agent status | inventory | version
+              bimba-site-agent writes [on | off]           machine commands from Setu on this computer (off = always refused)
               bimba-site-agent uninstall [--keep-data]     tell Setu, stop the service, remove the registration
               bimba-site-agent run                         run in the foreground (systemd starts it this way; containers too)
 
@@ -53,7 +54,7 @@ public final class AgentMain {
     static int exec(String[] args) {
         String cmd = args.length > 0 ? args[0].replaceFirst("^-+", "").toLowerCase(Locale.ROOT) : "help";
         try {
-            Map<String, String> opt = options(args);
+            Map<String, String> opt = "writes".equals(cmd) ? Map.of() : options(args);     // writes on | off: a word, no options
             switch (cmd) {
                 case "install":
                     return install(opt, Mode.INSTALL);
@@ -66,6 +67,8 @@ public final class AgentMain {
                     return run();
                 case "status":
                     return status();
+                case "writes":
+                    return writes(args.length > 1 ? args[1].toLowerCase(Locale.ROOT) : null);
                 case "inventory":
                     System.out.println(new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().serializeNulls().create()
                             .toJson(Inventory.collect(opt.get("server"), null)));
@@ -284,7 +287,36 @@ public final class AgentMain {
         System.out.println("sign-in:      " + (cfg.certFile != null ? "client certificate " + cfg.certSha256 + " (valid until " + cfg.certNotAfter + ")"
                 : "agent secret (the service asks for a certificate over HTTPS)"));
         System.out.println("enrolled:     " + cfg.enrolledAt);
+        System.out.println("commands:     " + (cfg.writesAllowed() ? "allowed (as Setu permits)" : "refused on this computer (bimba-site-agent writes on)"));
         System.out.println("log:          journalctl -u " + Paths.SERVICE);
+        return 0;
+    }
+
+    /**
+     * Machine commands (values Setu writes to the machines) on this computer: shows the setting, or turns it on / off.
+     * Off wins over every setting in Setu; the service reads it before each command, so no restart is needed.
+     */
+    private static int writes(String to) throws Exception {
+        if (to != null && !isRoot()) {
+            return notRoot();
+        }
+        AgentConfig cfg = AgentConfig.tryLoad();
+        if (cfg == null) {
+            System.err.println(AgentConfig.exists() ? "run with sudo to read " + Paths.configFile() : "the agent is not registered on this computer");
+            return 1;
+        }
+        if (to == null) {
+            System.out.println(cfg.writesAllowed() ? "on: machine commands from Setu are carried out (as Setu permits)"
+                    : "off: machine commands from Setu are refused on this computer");
+            return 0;
+        }
+        if (!"on".equals(to) && !"off".equals(to)) {
+            throw new IllegalArgumentException("writes on | off");
+        }
+        cfg.setAllowWrites("on".equals(to));
+        cfg.save();
+        Files2.chownTree(Paths.configDir(), Paths.USER);     // saved as root: the service account must still read it
+        System.out.println("Machine commands " + ("on".equals(to) ? "allowed" : "refused") + " on this computer.");
         return 0;
     }
 

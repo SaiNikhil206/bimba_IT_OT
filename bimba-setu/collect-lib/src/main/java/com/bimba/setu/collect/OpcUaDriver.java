@@ -20,6 +20,12 @@ import org.eclipse.milo.opcua.stack.core.types.builtin.DateTime;
 import org.eclipse.milo.opcua.stack.core.types.builtin.LocalizedText;
 import org.eclipse.milo.opcua.stack.core.types.builtin.NodeId;
 import org.eclipse.milo.opcua.stack.core.types.builtin.StatusCode;
+import org.eclipse.milo.opcua.stack.core.types.builtin.Variant;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UByte;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UInteger;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.ULong;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.UShort;
+import org.eclipse.milo.opcua.stack.core.types.builtin.unsigned.Unsigned;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseDirection;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.BrowseResultMask;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
@@ -140,6 +146,101 @@ public final class OpcUaDriver implements Driver {
             out.add(sc != null && sc.isUncertain() ? Reading.uncertain(value, explain(sc), at) : Reading.ok(value, at));
         }
         return out;
+    }
+
+    /**
+     * Writes one variable (Write service, value only), in the node's own data type: the value it holds now decides
+     * (Boolean, the signed and unsigned integer types, Float, Double, String). Reads it before and, settleMs later, after:
+     * {before, after, written}.
+     */
+    public Object[] write(String address, Object raw, long settleMs) throws Exception {
+        NodeId id;
+        try {
+            id = NodeId.parse(address.trim());
+        } catch (RuntimeException e) {
+            throw new Exception("invalid NodeId " + address);
+        }
+        if (client == null) {
+            connect();
+        }
+        try {
+            DataValue now = client.readValue(0.0, TimestampsToReturn.Neither, id).get(timeoutMs, TimeUnit.MILLISECONDS);
+            if (now.getStatusCode() != null && now.getStatusCode().isBad()
+                    && now.getStatusCode().getValue() == StatusCodes.Bad_NodeIdUnknown) {
+                throw new Exception("the server has no node " + address);
+            }
+            Object current = now.getValue() == null ? null : now.getValue().getValue();
+            Object value = typed(current, raw);
+            StatusCode sc = client.writeValue(id, DataValue.valueOnly(new Variant(value))).get(timeoutMs, TimeUnit.MILLISECONDS);
+            if (sc != null && sc.isBad()) {
+                throw new Exception("the server refused the write: " + explain(sc));
+            }
+            Thread.sleep(settleMs);                              // the server / PLC may still limit or change it
+            DataValue after = client.readValue(0.0, TimestampsToReturn.Neither, id).get(timeoutMs, TimeUnit.MILLISECONDS);
+            Object back = after.getValue() == null ? null : after.getValue().getValue();
+            return new Object[]{number(current), number(back), number(value)};
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            close();
+            throw new Exception("write to " + endpoint + " failed: " + rootMessage(e), e);
+        }
+    }
+
+    private static Object number(Object v) {
+        return v instanceof Number n ? (Object) n.doubleValue() : plain(v);
+    }
+
+    /** raw in the Java type of the node's current value (a node without a value: Boolean, Double or String) */
+    static Object typed(Object current, Object raw) throws Exception {
+        if (current instanceof Boolean || current == null && raw instanceof Boolean) {
+            return Writer.bool(raw);
+        }
+        if (current instanceof String || current instanceof LocalizedText || current == null && raw instanceof String) {
+            String s = raw instanceof Double d && d == Math.rint(d) && !Double.isInfinite(d) ? String.valueOf(d.longValue()) : String.valueOf(raw);
+            return current instanceof LocalizedText ? LocalizedText.english(s) : s;
+        }
+        if (!(raw instanceof Number n)) {
+            throw new Exception("this node holds a number" + (current == null ? "" : " (" + current.getClass().getSimpleName() + ")"));
+        }
+        double d = n.doubleValue();
+        if (current == null || current instanceof Double) {
+            return d;
+        }
+        if (current instanceof Float) {
+            return (float) d;
+        }
+        long r = Math.round(d);
+        if (current instanceof Byte) {
+            return (byte) fits(r, Byte.MIN_VALUE, Byte.MAX_VALUE, "SByte");
+        }
+        if (current instanceof Short) {
+            return (short) fits(r, Short.MIN_VALUE, Short.MAX_VALUE, "Int16");
+        }
+        if (current instanceof Integer) {
+            return (int) fits(r, Integer.MIN_VALUE, Integer.MAX_VALUE, "Int32");
+        }
+        if (current instanceof Long) {
+            return r;
+        }
+        if (current instanceof UByte) {
+            return Unsigned.ubyte(fits(r, 0, 255, "Byte"));
+        }
+        if (current instanceof UShort) {
+            return Unsigned.ushort((int) fits(r, 0, 65535, "UInt16"));
+        }
+        if (current instanceof UInteger) {
+            return Unsigned.uint(fits(r, 0, 0xFFFFFFFFL, "UInt32"));
+        }
+        if (current instanceof ULong) {
+            return Unsigned.ulong(fits(r, 0, Long.MAX_VALUE, "UInt64"));
+        }
+        throw new Exception("this node holds a " + current.getClass().getSimpleName() + ", which BIMBA does not write");
+    }
+
+    private static long fits(long v, long min, long max, String type) throws Exception {
+        if (v < min || v > max) {
+            throw new Exception("value " + v + " does not fit the node's type " + type + " (" + min + " to " + max + ")");
+        }
+        return v;
     }
 
     /**

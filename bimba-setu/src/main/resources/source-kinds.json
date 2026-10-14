@@ -11,11 +11,13 @@
     "  clearsOnCopy (fields emptied when a duplicate changes it), suggest (agent discovery list), examples {by, values}.",
     "kind: id, label, menu, needs (first agent version), platforms, pollMs, perDevice, browse {button, title, root, waiting},",
     "  test {button, readsTags}, tags {address | addressBy, hint | hintBy, newAddress}, summary [{if, text}] ({key|default},",
-    "  {key@} = the option's label, [..] left out when a value in it is empty), scan {ports} (network scan), fields."
+    "  {key@} = the option's label, [..] left out when a value in it is empty), scan {ports} (network scan), writes (takes",
+    "  machine commands: tags can be marked writable once the source's writes setting is on), fields."
   ],
   "kinds": [
     {
       "id": "opcua",
+      "writes": true,
       "label": "OPC UA",
       "menu": "OPC UA",
       "pollMs": 1000,
@@ -52,11 +54,15 @@
             { "value": "SignAndEncrypt", "label": "Sign and encrypt" },
             { "value": "Sign", "label": "Sign only" }
           ] },
-        { "key": "serverCert", "label": "Server certificate", "type": "certPin", "span": true, "advanced": true }
+        { "key": "serverCert", "label": "Server certificate", "type": "certPin", "span": true, "advanced": true },
+        { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
+          "span": true, "advanced": true,
+          "hint": "Off = read only. On: people with the Send machine commands permission can set the tags marked writable (each tag's ⋯ settings), within their limits. The server must allow the writes too." }
       ]
     },
     {
       "id": "modbus",
+      "writes": true,
       "label": "Modbus TCP",
       "menu": "Modbus TCP",
       "pollMs": 1000,
@@ -71,11 +77,15 @@
           "hint": "1 for most PLCs; the device's id behind a gateway." },
         { "key": "port", "label": "Port", "type": "number", "default": 502, "min": 1, "max": 65535, "advanced": true },
         { "key": "zeroBased", "label": "Addresses start at 0", "type": "checkbox", "default": false, "advanced": true,
-          "hint": "On: HR0 is the first register. Off: HR1 is (the usual Modbus numbering)." }
+          "hint": "On: HR0 is the first register. Off: HR1 is (the usual Modbus numbering)." },
+        { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
+          "span": true, "advanced": true,
+          "hint": "Off = read only. On: people with the Send machine commands permission can set the holding registers (HR) and coils (C) marked writable (each tag's ⋯ settings), within their limits." }
       ]
     },
     {
       "id": "mqtt",
+      "writes": true,
       "label": "MQTT",
       "menu": "MQTT / Sparkplug B",
       "needs": "1.6",
@@ -93,7 +103,7 @@
           "default": "mqtt://localhost:1883", "placeholder": "mqtt://broker:1883", "maxLength": 300, "ignoreCase": true,
           "pattern": "^\\s*((tcp|ssl|mqtt|mqtts|ws|wss)://)?[^\\s/?#@]+(:\\d{1,5})?(/\\S*)?\\s*$",
           "message": "Broker: an address like mqtt://broker:1883 or mqtts://broker:8883.",
-          "hint": "Seen from {computer}: mqtt://host:1883, mqtts://host:8883 (TLS), ws:// or wss:// for MQTT over WebSocket. The agent only subscribes." },
+          "hint": "Seen from {computer}: mqtt://host:1883, mqtts://host:8883 (TLS), ws:// or wss:// for MQTT over WebSocket. The agent only subscribes (unless machine commands are allowed, under Advanced)." },
         { "key": "payload", "label": "Messages", "type": "select", "default": "value", "required": true,
           "message": "Messages: value, json or sparkplug.",
           "options": [
@@ -117,7 +127,10 @@
           "hint": "Only for a private CA; otherwise the computer's trusted certificates are used." },
         { "key": "rebirth", "label": "Ask edge nodes to republish their metrics (Sparkplug rebirth) when the agent has not seen their birth",
           "type": "checkbox", "default": false, "span": true, "advanced": true, "showIf": { "field": "payload", "in": ["sparkplug"] },
-          "hint": "This sends a command (NCMD) to the edge node; off = read only, values appear as the edge nodes publish them." }
+          "hint": "This sends a command (NCMD) to the edge node; off = read only, values appear as the edge nodes publish them." },
+        { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
+          "span": true, "advanced": true,
+          "hint": "Off = read only (subscribe only). On: people with the Send machine commands permission can publish values to the tags marked writable (each tag's ⋯ settings: command topic, limits). Sparkplug B metrics get an NCMD / DCMD." }
       ]
     },
     {

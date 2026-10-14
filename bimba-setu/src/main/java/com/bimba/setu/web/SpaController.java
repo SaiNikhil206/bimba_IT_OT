@@ -14,11 +14,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 public class SpaController {
     private static final String ORG = "{org:[a-z0-9][a-z0-9-]*}";
 
-    @GetMapping({"/overview", "/pipelines", "/destinations", "/delivery", "/quarantine", "/registry", "/agents", "/tokens", "/users", "/roles", "/audit", "/profile", "/login",
+    @GetMapping({"/overview", "/pipelines", "/destinations", "/delivery", "/quarantine", "/registry", "/machines", "/commands", "/agents", "/tokens", "/users", "/roles", "/audit", "/profile", "/login",
             "/organizations", "/forgot-password", "/reset-password",
-            "/pipelines/{uid}", "/destinations/{uid}", "/users/{uid}", "/roles/{uid}", "/organizations/{uid}", "/agents/{uid}",
-            "/" + ORG + "/{page:overview|agents|tokens|pipelines|destinations|delivery|quarantine|registry|users|roles|audit}",
-            "/" + ORG + "/{page:pipelines|destinations|users|roles|agents}/{uid}"})
+            "/pipelines/{uid}", "/destinations/{uid}", "/users/{uid}", "/roles/{uid}", "/organizations/{uid}", "/agents/{uid}", "/machines/{uid}", "/commands/{uid}",
+            "/" + ORG + "/{page:overview|agents|machines|commands|tokens|pipelines|destinations|delivery|quarantine|registry|users|roles|audit}",
+            "/" + ORG + "/{page:pipelines|destinations|users|roles|agents|machines|commands}/{uid}"})
     String page() {
         return "forward:/index.html";
     }
