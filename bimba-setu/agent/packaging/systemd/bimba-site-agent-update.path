@@ -1,0 +1,10 @@
+[Unit]
+Description=BIMBA Site Agent updates (starts the updater when the agent has downloaded a newer installer)
+
+[Path]
+# written by the agent service after it downloaded and checked an installer Setu offered
+PathExists=/var/lib/bimba-site-agent/update/ready.json
+Unit=bimba-site-agent-update.service
+
+[Install]
+WantedBy=multi-user.target

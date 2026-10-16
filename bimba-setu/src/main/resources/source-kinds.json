@@ -57,7 +57,7 @@
         { "key": "serverCert", "label": "Server certificate", "type": "certPin", "span": true, "advanced": true },
         { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
           "span": true, "advanced": true,
-          "hint": "Off = read only. On: people with the Send machine commands permission can set the tags marked writable (each tag's ⋯ settings), within their limits. The server must allow the writes too." }
+          "hint": "Off = read only. On: people with the Send machine commands permission can set the tags marked writable (each tag's ⋯ settings), within their limits. The server must allow the writes too. Turning it on or off waits for another person's approval." }
       ]
     },
     {
@@ -80,7 +80,7 @@
           "hint": "On: HR0 is the first register. Off: HR1 is (the usual Modbus numbering)." },
         { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
           "span": true, "advanced": true,
-          "hint": "Off = read only. On: people with the Send machine commands permission can set the holding registers (HR) and coils (C) marked writable (each tag's ⋯ settings), within their limits." }
+          "hint": "Off = read only. On: people with the Send machine commands permission can set the holding registers (HR) and coils (C) marked writable (each tag's ⋯ settings), within their limits. Turning it on or off waits for another person's approval." }
       ]
     },
     {
@@ -130,7 +130,7 @@
           "hint": "This sends a command (NCMD) to the edge node; off = read only, values appear as the edge nodes publish them." },
         { "key": "writes", "label": "Allow machine commands (write values to this source)", "type": "checkbox", "default": false,
           "span": true, "advanced": true,
-          "hint": "Off = read only (subscribe only). On: people with the Send machine commands permission can publish values to the tags marked writable (each tag's ⋯ settings: command topic, limits). Sparkplug B metrics get an NCMD / DCMD." }
+          "hint": "Off = read only (subscribe only). On: people with the Send machine commands permission can publish values to the tags marked writable (each tag's ⋯ settings: command topic, limits). Sparkplug B metrics get an NCMD / DCMD. Turning it on or off waits for another person's approval." }
       ]
     },
     {

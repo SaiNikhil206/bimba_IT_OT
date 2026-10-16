@@ -22,6 +22,11 @@ namespace Bimba.SiteAgent
     ///   uninstall-notify      MSI step: tell Setu (through the service, which holds the certificate)
     ///   remove-data           MSI step: delete the configuration and logs
     ///   service               entry point of the Windows service
+    ///   updates [on | off]    automatic updates from Setu on this machine
+    ///   update-service        entry point of the updater service (BIMBASiteAgentUpdate, LocalSystem)
+    ///   run-update ...        the updater's runner (a copy outside Program Files): runs the checked installer
+    ///   upgrade               this newer exe over the installed one, keeping the registration (run by the updater)
+    ///   updater-setup         MSI step: lets the agent start the updater service; Setu address for the updater
     /// </summary>
     internal static class Program
     {
@@ -33,6 +38,8 @@ namespace Bimba.SiteAgent
   BIMBA-Site-Agent-Setup.exe uninstall [--quiet]
   BIMBA-Site-Agent-Setup.exe status | inventory
   BIMBA-Site-Agent-Setup.exe writes [on | off]      machine commands from Setu on this machine (off = always refused)
+  BIMBA-Site-Agent-Setup.exe updates [on | off]     automatic updates from Setu on this machine (off = always refused)
+  BIMBA-Site-Agent-Setup.exe upgrade                install this newer version over the installed one (keeps the registration)
   BIMBA-Site-Agent-Setup.exe test --server <gateway> (--token <t> | --email <e-mail> ...)
   For Intune / SCCM / Group Policy use BIMBA-Site-Agent.msi:
     msiexec /i BIMBA-Site-Agent.msi /qn SERVER=<gateway> TOKEN=<enrollment token> [SITE=<site>] [TRUSTCERT=<sha256>]
@@ -55,6 +62,11 @@ namespace Bimba.SiteAgent
                 ServiceBase.Run(new AgentService());
                 return 0;
             }
+            if (cmd == "update-service")
+            {
+                ServiceBase.Run(new UpdaterService());
+                return 0;
+            }
             if (cmd == "" || (cmd == "uninstall" && !args.Contains("--quiet")))
                 return RunGui(cmd, args);
 
@@ -63,8 +75,8 @@ namespace Bimba.SiteAgent
             Log.Console = true;
             try
             {
-                // writes on | off: a word, no options
-                var opt = cmd == "writes" ? new Dictionary<string, string>() : Options(args.Skip(1).ToArray());
+                // writes / updates on | off: a word, no options
+                var opt = cmd == "writes" || cmd == "updates" ? new Dictionary<string, string>() : Options(args.Skip(1).ToArray());
                 switch (cmd)
                 {
                     case "install": return Install(opt, Mode.Install);
@@ -89,6 +101,22 @@ namespace Bimba.SiteAgent
                         Console.WriteLine("BIMBA Site Agent removed.");
                         return 0;
                     case "status": return Status();
+                    case "updates":
+                        if (args.Length > 1 && !Installer.IsElevated) return NotElevated();
+                        return Updater.Updates(args.Length > 1 ? args[1].ToLowerInvariant() : null);
+                    case "upgrade":
+                        if (!Installer.IsElevated) return NotElevated();
+                        Installer.Upgrade(s => Console.WriteLine("  " + s));
+                        Console.WriteLine("BIMBA Site Agent upgraded to " + Inventory.Version + "; the registration was kept.");
+                        return 0;
+                    case "run-update":          // the updater's runner (SYSTEM, outside Program Files)
+                        if (!Installer.IsElevated) return NotElevated();
+                        return Updater.RunUpdate(opt.TryGetValue("kind", out var k) ? k : null, opt.TryGetValue("version", out var v) ? v : null,
+                            opt.TryGetValue("file", out var f) ? f : null);
+                    case "updater-setup":       // MSI: after the services are installed
+                        if (!Installer.IsElevated) return NotElevated();
+                        Updater.Setup();
+                        return 0;
                     case "writes": return Writes(args.Length > 1 ? args[1].ToLowerInvariant() : null);
                     case "inventory":
                         Console.WriteLine(Json.Pretty(Inventory.Collect(opt.TryGetValue("server", out var s) ? s : null)));
@@ -217,6 +245,7 @@ namespace Bimba.SiteAgent
                 if (mode == Mode.Enroll)
                 {
                     Installer.SaveConfig(cfg);
+                    Updater.SaveTrust(cfg, true);
                     Console.WriteLine("Configuration saved; the service gets its client certificate when it starts.");
                     return 0;
                 }
@@ -280,6 +309,8 @@ namespace Bimba.SiteAgent
                 Console.WriteLine($"sign-in:      {(cfg.CertThumbprint != null ? $"client certificate {cfg.CertThumbprint} (valid until {cfg.CertNotAfter})" : "agent secret (the service asks for a certificate over HTTPS)")}");
                 Console.WriteLine($"enrolled:     {cfg.EnrolledAt}");
                 Console.WriteLine($"commands:     {(cfg.WritesAllowed ? "allowed (as Setu permits)" : "refused on this machine (writes on)")}");
+                string why = Updater.WhyNot(Updater.Kind());
+                Console.WriteLine($"updates:      {(why != null ? "manual (" + why + ")" : Updater.Allowed ? "automatic (as Setu decides)" : "refused on this machine (updates on)")}");
             }
             else if (!Installer.IsElevated)
             {

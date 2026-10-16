@@ -71,13 +71,15 @@ public class ConsoleController {
     private final TagRegistry registry;
     private final QuarantineSettings quarantineSettings;
     private final com.bimba.setu.delivery.BufferAlerts bufferAlerts;
+    private final com.bimba.setu.agents.AgentUpdates updates;
 
     public ConsoleController(SetuService setu, AgentRegistry agents, SecurityService security, OrgService orgs,
                              DestinationService destinations, DestinationStore store, PipelineService pipelines,
                              com.bimba.setu.security.PasswordResetService resets, EnrollTokens tokens, InstallerFile installer,
                              AgentSources sources, Ingest ingest, TagRegistry registry, QuarantineSettings quarantineSettings,
-                             com.bimba.setu.delivery.BufferAlerts bufferAlerts) {
+                             com.bimba.setu.delivery.BufferAlerts bufferAlerts, com.bimba.setu.agents.AgentUpdates updates) {
         this.bufferAlerts = bufferAlerts;
+        this.updates = updates;
         this.sources = sources;
         this.ingest = ingest;
         this.registry = registry;
@@ -191,12 +193,19 @@ public class ConsoleController {
     Map<String, Object> agents(@AuthenticationPrincipal Principal p) throws ApiException {
         // with what each agent collects: its data sources and the machines they report as
         Map<String, Map<String, Object>> collects = sources.summary(p.org());
+        Map<String, Map<String, Object>> updating = updates.summary(p.org());
         List<Map<String, Object>> list = new ArrayList<>();
         for (Map<String, Object> a : agents.list(p.org())) {
+            // a role limited to some sites or site agents sees only those
+            if (!p.allows(Permission.AGENTS_VIEW, (String) a.get("id"), (String) a.get("site"), null)) {
+                continue;
+            }
             Map<String, Object> m = new LinkedHashMap<>(a);
             Map<String, Object> c = collects.get((String) a.get("id"));
             m.put("sources", c == null ? 0 : c.get("sources"));
             m.put("machines", c == null ? List.of() : c.get("machines"));
+            Map<String, Object> u = updating.get((String) a.get("id"));
+            m.put("update", u != null ? u : updates.unreported((String) a.get("agentVersion")));     // software version, automatic updates
             list.add(m);
         }
         return Map.of("agents", list);
@@ -206,6 +215,7 @@ public class ConsoleController {
     @PreAuthorize("hasAuthority('agents.manage')")
     Map<String, Object> revoke(@AuthenticationPrincipal Principal p, @PathVariable String id, HttpServletRequest req)
             throws AgentRegistry.ApiError, ApiException {
+        security.require(p, Permission.AGENTS_MANAGE, id);
         String name = agents.revoke(id, p.org(), p.username(), req.getRemoteAddr());
         security.audit(p, "agent.revoke", name, true, req.getRemoteAddr(), Map.of("agentId", id));
         return Map.of("ok", true);
@@ -267,14 +277,14 @@ public class ConsoleController {
     }
 
     @GetMapping("/agents/tokens")
-    @PreAuthorize("hasAuthority('agents.manage')")
+    @PreAuthorize("hasAuthority('agents.enroll')")
     Map<String, Object> enrollTokens(@AuthenticationPrincipal Principal p) throws ApiException {
         return Map.of("tokens", tokens.list(p.org()));
     }
 
     /** body {label, maxUses?, days?}; the answer holds the token itself, which is never shown again */
     @PostMapping("/agents/tokens")
-    @PreAuthorize("hasAuthority('agents.manage')")
+    @PreAuthorize("hasAuthority('agents.enroll')")
     Map<String, Object> createEnrollToken(@AuthenticationPrincipal Principal p, @RequestBody(required = false) String body,
                                           HttpServletRequest req) throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -295,7 +305,7 @@ public class ConsoleController {
      * reused later or by someone else. Roll-outs to many computers use a named token (Administration → Enrollment tokens).
      */
     @PostMapping("/agents/tokens/one-time")
-    @PreAuthorize("hasAuthority('agents.manage')")
+    @PreAuthorize("hasAuthority('agents.enroll')")
     Map<String, Object> oneTimeEnrollToken(@AuthenticationPrincipal Principal p, HttpServletRequest req) throws ApiException {
         Map<String, Object> t = tokens.createOneTime(p.org(), p.userId(), p.username(), req.getRemoteAddr());
         security.audit(p, "agent.token.create", EnrollTokens.ONE_TIME_LABEL, true, req.getRemoteAddr(),
@@ -304,7 +314,7 @@ public class ConsoleController {
     }
 
     @PostMapping("/agents/tokens/{id}/revoke")
-    @PreAuthorize("hasAuthority('agents.manage')")
+    @PreAuthorize("hasAuthority('agents.enroll')")
     Map<String, Object> revokeEnrollToken(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req)
             throws ApiException {
         String name = tokens.revoke(p.org(), id, p.username(), req.getRemoteAddr());
@@ -342,7 +352,7 @@ public class ConsoleController {
 
     /** Connection test of the form as it is (saved or not); "original" = id of the saved destination whose secrets to use. */
     @PostMapping("/destinations/test")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('destinations.manage')")
     Map<String, Object> testDestination(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -356,7 +366,7 @@ public class ConsoleController {
 
     /** sends ONE test reading through the destination as the form shows it (the receiver stores it) */
     @PostMapping("/destinations/send-test")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('destinations.manage')")
     Map<String, Object> sendTestReading(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -370,13 +380,13 @@ public class ConsoleController {
 
     /** a template applied to a sample reading (nothing is saved or sent) */
     @PostMapping("/destinations/preview")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAnyAuthority('destinations.manage', 'pipelines.manage')")
     Map<String, Object> previewTemplate(@RequestBody String body) throws ApiException {
         return destinations.preview(ApiErrors.parse(body));
     }
 
     @PostMapping("/destinations")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('destinations.manage')")
     ResponseEntity<Map<String, Object>> createDestination(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -386,7 +396,7 @@ public class ConsoleController {
     }
 
     @PutMapping("/destinations/{id}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('destinations.manage')")
     Map<String, Object> updateDestination(@AuthenticationPrincipal Principal p, @PathVariable long id, @RequestBody String body,
                                           HttpServletRequest req) throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -396,7 +406,7 @@ public class ConsoleController {
     }
 
     @DeleteMapping("/destinations/{id}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('destinations.manage')")
     Map<String, Object> deleteDestination(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req)
             throws ApiException {
         String name = destinations.delete(p.org(), id);
@@ -421,7 +431,7 @@ public class ConsoleController {
     }
 
     @PostMapping("/pipelines")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('pipelines.manage')")
     ResponseEntity<Map<String, Object>> createPipeline(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -431,7 +441,7 @@ public class ConsoleController {
     }
 
     @PutMapping("/pipelines/{id}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('pipelines.manage')")
     Map<String, Object> updatePipeline(@AuthenticationPrincipal Principal p, @PathVariable long id, @RequestBody String body,
                                        HttpServletRequest req) throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -441,7 +451,7 @@ public class ConsoleController {
     }
 
     @PostMapping("/pipelines/{id}/active")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('pipelines.manage')")
     Map<String, Object> activatePipeline(@AuthenticationPrincipal Principal p, @PathVariable long id, @RequestBody String body,
                                          HttpServletRequest req) throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -452,7 +462,7 @@ public class ConsoleController {
     }
 
     @DeleteMapping("/pipelines/{id}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('pipelines.manage')")
     Map<String, Object> deletePipeline(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req)
             throws ApiException {
         String name = pipelines.delete(p.org(), id);
@@ -462,7 +472,7 @@ public class ConsoleController {
 
     /** sends a test buffer alert to the pipeline's saved recipients (its own, and the organization's when it asks for them) */
     @PostMapping("/pipelines/{id}/buffer-alerts/test")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('pipelines.manage')")
     Map<String, Object> testBufferAlert(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req)
             throws ApiException {
         ownPipeline(p, id);
@@ -500,7 +510,7 @@ public class ConsoleController {
     }
 
     @GetMapping("/pipelines/{id}/rejected/{route}/{file}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('messages.view')")
     Map<String, Object> rejectedBatch(@AuthenticationPrincipal Principal p, @PathVariable long id, @PathVariable int route,
                                       @PathVariable String file) throws ApiException {
         ownPipeline(p, id);
@@ -513,7 +523,7 @@ public class ConsoleController {
 
     /** body {items: [{route, file}], action: resend | discard} */
     @PostMapping("/pipelines/{id}/rejected")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('quarantine.manage')")
     Map<String, Object> handleRejected(@AuthenticationPrincipal Principal p, @PathVariable long id, @RequestBody String body,
                                        HttpServletRequest req) throws ApiException {
         ownPipeline(p, id);
@@ -582,7 +592,7 @@ public class ConsoleController {
     }
 
     @GetMapping("/quarantine/{id}")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('messages.view')")
     Map<String, Object> quarantined(@AuthenticationPrincipal Principal p, @PathVariable String id) throws ApiException {
         Quarantine.Entry e;
         try {
@@ -607,7 +617,7 @@ public class ConsoleController {
 
     /** body {ids: [..], action: replay | discard} */
     @PostMapping("/quarantine")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('quarantine.manage')")
     Map<String, Object> handleQuarantine(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         JsonObject b = ApiErrors.parse(body);
@@ -658,7 +668,7 @@ public class ConsoleController {
     }
 
     @PutMapping("/quarantine/settings")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('quarantine.manage')")
     Map<String, Object> saveQuarantineSettings(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         Map<String, Object> out = quarantineSettings.save(p.org(), ApiErrors.parse(body));
@@ -671,7 +681,7 @@ public class ConsoleController {
 
     /** sends a test alert with the saved settings */
     @PostMapping("/quarantine/settings/test")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('quarantine.manage')")
     Map<String, Object> testQuarantineAlert(@AuthenticationPrincipal Principal p, HttpServletRequest req) throws ApiException {
         Map<String, Object> out = quarantineSettings.test(p.org());
         security.audit(p, "quarantine.alert.test", "quarantine alert", true, req.getRemoteAddr(), out);
@@ -724,7 +734,7 @@ public class ConsoleController {
 
     /** body: one entry {machine, tag, tagName, machineId, plantId, dataType, unit, writable, description}; all empty = removed */
     @PutMapping("/registry/entry")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('registry.manage')")
     Map<String, Object> saveRegistryEntry(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         TagRegistry.Entry e = registry.entry(ApiErrors.parse(body));
@@ -737,7 +747,7 @@ public class ConsoleController {
     }
 
     @DeleteMapping("/registry/entry")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('registry.manage')")
     Map<String, Object> deleteRegistryEntry(@AuthenticationPrincipal Principal p, @RequestParam String machine, @RequestParam String tag,
                                             HttpServletRequest req) throws ApiException {
         List<TagRegistry.Entry> list = registry.entries(p.org()).stream()
@@ -758,7 +768,7 @@ public class ConsoleController {
 
     /** body {csv, mode: merge (default, rows replace the same tag's entry) | replace (the file is the whole registry)} */
     @PostMapping("/registry/import")
-    @PreAuthorize("hasAuthority('delivery.manage')")
+    @PreAuthorize("hasAuthority('registry.manage')")
     Map<String, Object> importRegistry(@AuthenticationPrincipal Principal p, @RequestBody String body, HttpServletRequest req)
             throws ApiException {
         if (body != null && body.length() > 4 * 1024 * 1024) {
@@ -801,7 +811,7 @@ public class ConsoleController {
     // ------------------------------------------------------------------ users (members of the organization)
 
     @GetMapping("/users")
-    @PreAuthorize("hasAuthority('users.manage')")
+    @PreAuthorize("hasAnyAuthority('users.view', 'users.manage')")
     Map<String, Object> users(@AuthenticationPrincipal Principal p) throws ApiException {
         return Map.of("users", security.users(p));
     }
@@ -852,7 +862,7 @@ public class ConsoleController {
     // ------------------------------------------------------------------ roles
 
     @GetMapping("/roles")
-    @PreAuthorize("hasAuthority('users.manage') or hasAuthority('roles.manage')")
+    @PreAuthorize("hasAnyAuthority('users.view', 'users.manage', 'roles.manage')")
     Map<String, Object> roles(@AuthenticationPrincipal Principal p) throws ApiException {
         return Map.of("roles", security.roles(p), "permissions", Permission.catalog());
     }
@@ -876,6 +886,36 @@ public class ConsoleController {
     Map<String, Object> deleteRole(@AuthenticationPrincipal Principal p, @PathVariable long id, HttpServletRequest req) throws ApiException {
         security.deleteRole(p, id, req.getRemoteAddr());
         return Map.of("ok", true);
+    }
+
+    // ------------------------------------------------------------------ duty separation + access review
+
+    /** the duty separation rules, members who break one, and the BRD personas behind the built-in roles */
+    @GetMapping("/access/duties")
+    @PreAuthorize("hasAnyAuthority('users.view', 'users.manage', 'roles.manage')")
+    Map<String, Object> duties(@AuthenticationPrincipal Principal p) throws ApiException {
+        return security.duties(p);
+    }
+
+    /** what a role assignment can be limited to: sites, site agents, machines */
+    @GetMapping("/access/places")
+    @PreAuthorize("hasAnyAuthority('users.view', 'users.manage')")
+    Map<String, Object> places(@AuthenticationPrincipal Principal p) throws ApiException {
+        return security.places(p);
+    }
+
+    /** every member with their roles, scopes, permissions and last sign-in, as a spreadsheet (BRD FR-RBAC-09) */
+    @GetMapping("/access/review.csv")
+    @PreAuthorize("hasAnyAuthority('users.view', 'users.manage')")
+    ResponseEntity<String> accessReview(@AuthenticationPrincipal Principal p, HttpServletRequest req) throws ApiException {
+        String csv = security.accessReviewCsv(p);
+        security.audit(p, "access.review.export", p.orgName(), true, req.getRemoteAddr(), Map.of());
+        String name = "access-review-" + p.orgSlug() + "-" + java.time.LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(name).build().toString())
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .contentType(new MediaType("text", "csv", java.nio.charset.StandardCharsets.UTF_8))
+                .body("﻿" + csv);      // a byte order mark, so Excel opens it as UTF-8
     }
 
     // ------------------------------------------------------------------ audit

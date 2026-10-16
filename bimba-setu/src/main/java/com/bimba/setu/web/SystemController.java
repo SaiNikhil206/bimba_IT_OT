@@ -4,15 +4,21 @@ import com.bimba.setu.Db;
 import com.bimba.setu.SetuService;
 import com.bimba.setu.agents.AgentRegistry;
 import com.bimba.setu.agents.AgentSources;
+import com.bimba.setu.agents.AgentUpdates;
 import com.bimba.setu.config.BimbaConfig;
 import com.bimba.setu.security.SecurityService.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.async.DeferredResult;
 
@@ -33,6 +39,9 @@ import java.util.Map;
  *   POST /system/bimba-agent-commands    edge collector: long-poll for the next console command (204 = none)
  *   POST /system/bimba-agent-commands/{id}/result   the command's answer {ok, result | error}
  *   POST /system/bimba-agent-readings    edge collector: {messages:[canonical messages]} -> delivery
+ *   GET  /system/bimba-agent-update/download?kind=exe|msi|deb|tar   agent service: the installer of an offered update
+ *   GET  /system/bimba-agent-update/release   the installers' versions and SHA-256 (no sign-in: the computer's updater
+ *                                        checks a downloaded installer against it on its own; nothing secret)
  * </pre>
  */
 @RestController
@@ -40,12 +49,14 @@ public class SystemController {
     private final SetuService setu;
     private final AgentRegistry agents;
     private final AgentSources sources;
+    private final AgentUpdates updates;
     private final Db db;
 
-    public SystemController(SetuService setu, AgentRegistry agents, AgentSources sources, Db db) {
+    public SystemController(SetuService setu, AgentRegistry agents, AgentSources sources, AgentUpdates updates, Db db) {
         this.setu = setu;
         this.agents = agents;
         this.sources = sources;
+        this.updates = updates;
         this.db = db;
     }
 
@@ -82,11 +93,47 @@ public class SystemController {
                                   @RequestHeader(value = "Authorization", required = false) String auth)
             throws ApiException, AgentRegistry.ApiError {
         ready(req);
-        Map<String, Object> out = new LinkedHashMap<>(agents.heartbeat(caller(req, agentId, auth), ApiErrors.parse(body), req.getRemoteAddr()));
+        com.google.gson.JsonObject parsed = ApiErrors.parse(body);
+        Map<String, Object> out = new LinkedHashMap<>(agents.heartbeat(caller(req, agentId, auth), parsed, req.getRemoteAddr()));
         if (out.get("agentId") instanceof String id) {
             out.put("configVersion", sources.version(id));       // the edge collector fetches its config when this changes
+            Map<String, Object> offer = updates.onHeartbeat(id, parsed);
+            if (offer != null) {
+                out.put("update", offer);                         // a newer installer: the agent runs it over itself
+            }
         }
         return out;
+    }
+
+    /** the installer of an offered update, unchanged (its SHA-256 is the published one); signed in as the agent */
+    @GetMapping("/system/bimba-agent-update/download")
+    ResponseEntity<Resource> updateDownload(@RequestParam String kind, HttpServletRequest req,
+                                            @RequestHeader(value = "X-BIMBA-Agent", required = false) String agentId,
+                                            @RequestHeader(value = "Authorization", required = false) String auth)
+            throws ApiException, AgentRegistry.ApiError {
+        ready(req);
+        agents.check(caller(req, agentId, auth));
+        if (!java.util.Set.of("exe", "msi", "deb", "tar").contains(kind)) {
+            throw new ApiException(400, "kind", "kind must be exe, msi, deb or tar");
+        }
+        java.nio.file.Path file = updates.file(kind);
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            throw new ApiException(404, "installer", "That installer is not available on this Setu server.");
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(new FileSystemResource(file));
+    }
+
+    /** {files: {kind: {version, sha256, size}}}: what the computer's updater compares a downloaded installer with */
+    @GetMapping("/system/bimba-agent-update/release")
+    ResponseEntity<Map<String, Object>> updateRelease(HttpServletRequest req) throws ApiException {
+        ready(req);
+        Map<String, Object> files = new LinkedHashMap<>();
+        updates.release().forEach((k, v) -> files.put(k, Map.of("version", v.get("version"), "sha256", v.get("sha256"), "size", v.get("size"))));
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(Map.of("files", files));
     }
 
     @GetMapping("/system/bimba-agent-config")

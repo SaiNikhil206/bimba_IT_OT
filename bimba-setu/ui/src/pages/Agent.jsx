@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useSession } from "../session.jsx";
 import { Card, Confirm, Empty, FilterSelect, full, Modal, Msg, PageHeader, SortTh, sortRows, Status, useOrgPath, usePoll, useRemembered, useToast, Verdict, when } from "../ui.jsx";
+import { SafetyRequests } from "./SafetyChanges.jsx";
+import { SoftwareCard } from "./AgentUpdates.jsx";
 
 // One site agent (/<org>/agents/<id>). The words, kept apart on purpose:
 //   computer  the SCADA computer the agent is installed on: Windows, Linux or Raspberry Pi (Overview)
@@ -158,9 +160,10 @@ export default function AgentPage({ id }) {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{label}</button>
         ))}
       </div>
-      {tab === "sources" && <Sources a={data} canManage={can("agents.manage") && ACTIVE.includes(data.status)} reload={reload} />}
+      {tab === "sources" && <Sources a={data} canManage={(data.can?.manageSources ?? can("sources.manage")) && ACTIVE.includes(data.status)} reload={reload} />}
       {tab === "data" && <LiveData a={data} toSources={() => setTab("sources")} />}
-      {tab === "computer" && <Overview a={data} canManage={can("agents.manage")} />}
+      {tab === "computer" && <Overview a={data} canManage={data.can?.revoke ?? can("agents.manage")}
+                                        canUpdate={(data.can?.update ?? can("agents.manage")) && ACTIVE.includes(data.status)} reload={reload} />}
     </KindsContext.Provider>
   );
 }
@@ -210,7 +213,7 @@ function AgentVerdict({ a, machines, goTo }) {
 
 // ------------------------------------------------------------------ computer & agent
 
-function Overview({ a, canManage }) {
+function Overview({ a, canManage, canUpdate, reload }) {
   const d = a.details ?? {};
   const os = d.os ?? {};
   const hw = d.hardware ?? {};
@@ -257,6 +260,7 @@ function Overview({ a, canManage }) {
           </dl>
         </Card>
       </div>
+      {ACTIVE.includes(a.status) && <SoftwareCard a={a} canUpdate={canUpdate} reload={reload} />}
       <div className="mgrid">
         <Card title="SCADA / OT software" subtitle={linux ? "Found on the computer in the installed packages, services and /opt."
           : "Found on the computer in the installed programs and Windows services."}>
@@ -440,9 +444,16 @@ function LiveData({ a, toSources }) {
 
 // ------------------------------------------------------------------ data sources
 
-function Sources({ a, canManage, reload }) {
+function Sources({ a, canManage, reload: reloadAgent }) {
   const toast = useToast();
   const kinds = useKinds();
+  // machine command settings changes waiting for a second person (four-eyes)
+  const changes = usePoll(`safety-changes?agent=${a.id}`, 15_000);
+  const waitingFor = new Set((changes.data?.requests ?? []).filter((r) => r.state === "pending").map((r) => r.sourceId));
+  const reload = () => {
+    reloadAgent();
+    changes.reload();
+  };
   const [editing, setEditing] = useState(null);       // source | {new, ...preset}
   const [removing, setRemoving] = useState(null);
   const [acting, setActing] = useState(null);         // source id being checked, or source id + device being added
@@ -523,6 +534,7 @@ function Sources({ a, canManage, reload }) {
           </div>
         </Card>
       )}
+      <SafetyRequests data={changes.data} reload={reload} />
       {missing.map((s) => (
         <Msg key={s.id} kind="warn">
           {s.name}: {s.scan.missing.join(", ")} {s.scan.missing.length === 1 ? "is" : "are"} no longer on the server. Their tags read as bad until you untick them (Edit).
@@ -570,6 +582,7 @@ function Sources({ a, canManage, reload }) {
                       </small>
                     )}
                     <small>every {s.pollMs >= 1000 ? `${s.pollMs / 1000} s` : `${s.pollMs} ms`}</small>
+                    {waitingFor.has(s.id) && <small className="warnc">Machine command change waits for approval</small>}
                   </td>
                   <td style={{ minWidth: 0 }}>
                     {kindLabel(kinds, s.kind)}
@@ -645,7 +658,12 @@ function Sources({ a, canManage, reload }) {
       {scanning && <ScanDialog a={a} onClose={() => setScanning(false)} onDone={(r) => { setScanning(false); setNet(r); }} />}
       {editing && (
         <SourceEditor agent={a} source={editing} onClose={() => setEditing(null)}
-                      onSaved={(s) => { setEditing(null); toast(`${s.name} saved. The agent applies it within seconds.`); reload(); }} />
+                      onSaved={(s) => {
+                        setEditing(null);
+                        toast(s.changeRequest ? `${s.name} saved. Its machine command settings change waits for another person's approval; until then the old settings apply.`
+                          : `${s.name} saved. The agent applies it within seconds.`);
+                        reload();
+                      }} />
       )}
       {removing && (
         <Confirm title={`Remove ${removing.name}?`} danger confirm="Remove"
@@ -1271,7 +1289,8 @@ function TagWrites({ kd, get, t, upd }) {
           </label>
           <p className="hint">
             {takes === "boolean" ? "Takes on / off. " : takes === "text" ? "Takes text. " : "In the tag's unit, as shown (scaling and unit conversion are undone before writing). "}
-            {!on && "Commands also need Allow machine commands in this data source's Advanced settings."}
+            {!on && "Commands also need Allow machine commands in this data source's Advanced settings. "}
+            A change to these settings waits for another person with Approve machine commands; until then the old ones apply.
           </p>
         </>
       )}

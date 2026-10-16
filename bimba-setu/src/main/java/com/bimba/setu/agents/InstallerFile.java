@@ -56,6 +56,11 @@ public class InstallerFile {
         };
     }
 
+    /** the installer file of a kind (it may not exist) */
+    public Path path(String kind) {
+        return dir.resolve(fileName(kind));
+    }
+
     /** {exe, msi, deb, tar: {available, fileName, size, sha256, builtAt, signed}, release: {...}, releaseLinux: {...}} */
     public Map<String, Object> info() {
         Map<String, Object> m = new LinkedHashMap<>();

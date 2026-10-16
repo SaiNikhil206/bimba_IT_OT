@@ -8,7 +8,10 @@
                       never stored) and writes the locked-down configuration in ProgramData
     uninstall-notify  before the service stops: the service tells Setu and deletes its certificate and key
     remove-data       after the service stopped: deletes the configuration and logs
-  Upgrades (same UpgradeCode, higher version) keep the configuration, so they need no TOKEN.
+    updater-setup     after the services are installed: lets the agent (LocalService) start the updater service
+                      BIMBASiteAgentUpdate, and gives the updater Setu's address (automatic updates)
+  Upgrades (same UpgradeCode, higher version) keep the configuration, so they need no TOKEN. From 1.10 on the agent
+  runs them itself when Setu offers a newer MSI (msiexec /i ... /qn from the updater service).
   TOKEN is a hidden property and the enroll command line is hidden, so the token does not appear in MSI logs.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -62,6 +65,12 @@
           <!-- "Automatic (Delayed Start)", like the .exe install (MSI's own ServiceConfig is documented as unreliable) -->
           <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BIMBASiteAgent" Name="DelayedAutostart" Value="1" Type="integer" />
           <ServiceControl Id="AgentServiceControl" Name="BIMBASiteAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          <!-- automatic updates: started by the agent when it has downloaded a newer installer; stops when done -->
+          <ServiceInstall Id="UpdaterService" Name="BIMBASiteAgentUpdate" DisplayName="BIMBA Site Agent Update"
+                          Description="Installs BIMBA Site Agent updates that Setu offers (started by the agent, stops when done)."
+                          Type="ownProcess" Start="demand" ErrorControl="normal" Account="LocalSystem"
+                          Arguments="update-service" Vital="yes" />
+          <ServiceControl Id="UpdaterServiceControl" Name="BIMBASiteAgentUpdate" Stop="both" Remove="uninstall" Wait="yes" />
           <!-- tells the exe that Windows Installer owns this installation (it then never touches files or the service) -->
           <RegistryValue Root="HKLM" Key="SOFTWARE\BIMBA\Site Agent" Name="ProductCode" Value="[ProductCode]" Type="string" />
           <RegistryValue Root="HKLM" Key="SOFTWARE\BIMBA\Site Agent" Name="InstalledBy" Value="msi" Type="string" />
@@ -85,6 +94,11 @@
     <CustomAction Id="BimbaInstallEdge" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
                   Return="check" />
 
+    <SetProperty Id="BimbaSetupUpdater" Sequence="execute" Before="BimbaSetupUpdater" Condition="NOT REMOVE"
+                 Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; updater-setup" />
+    <CustomAction Id="BimbaSetupUpdater" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no"
+                  Return="check" />
+
     <SetProperty Id="BimbaNotifyUninstall" Sequence="execute" Before="BimbaNotifyUninstall"
                  Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"
                  Value="&quot;[INSTALLFOLDER]bimba-site-agent.exe&quot; uninstall-notify" />
@@ -100,6 +114,7 @@
     <InstallExecuteSequence>
       <Custom Action="BimbaInstallEdge" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="BimbaEnroll" After="BimbaInstallEdge" Condition="NOT REMOVE AND TOKEN" />
+      <Custom Action="BimbaSetupUpdater" After="InstallServices" Condition="NOT REMOVE" />
       <Custom Action="BimbaNotifyUninstall" Before="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="BimbaRemoveData" After="StopServices" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>

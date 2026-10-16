@@ -69,6 +69,8 @@ export function SessionProvider({ children }) {
     ...state,
     org: state.user?.org ?? null,
     can: (p) => !!state.user && state.user.permissions.includes(p),
+    // held for the whole organization (not only through role assignments limited to some sites, agents or machines)
+    everywhere: (p) => !!state.user && state.user.permissions.includes(p) && !state.user.scopes?.[p],
     reload, signedIn, signedOut, logout, switchOrg, clearNotice,
   }), [state, reload, signedIn, signedOut, logout, switchOrg, clearNotice]);
 

@@ -115,6 +115,8 @@ namespace Bimba.SiteAgent
             if (machine != null) body["machine"] = machine;
             var collector = EdgeCollector.Current?.Status();
             if (collector != null && status == "running") body["collector"] = collector;
+            var updates = status == "running" ? Updater.Current?.Report() : null;
+            if (updates != null) body["updates"] = updates;          // how this machine updates itself, and how far an update got
             return Send(HttpMethod.Post, "/system/bimba-agent-heartbeat", body, cfg);
         }
 
@@ -133,6 +135,39 @@ namespace Bimba.SiteAgent
 
         public IDictionary<string, object> CommandResult(AgentConfig cfg, string id, IDictionary<string, object> answer) =>
             Send(HttpMethod.Post, "/system/bimba-agent-commands/" + Uri.EscapeDataString(id) + "/result", answer, cfg);
+
+        /// <summary>the installers' versions and SHA-256 (no sign-in): the updater checks a downloaded installer against it</summary>
+        public IDictionary<string, object> Release() => Send(HttpMethod.Get, "/system/bimba-agent-update/release", null, null);
+
+        /// <summary>downloads the installer of an offered update (signed in as the agent) into target</summary>
+        public void Download(AgentConfig cfg, string path, string target)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, Server + path);
+            req.Headers.Add("X-BIMBA-Agent", cfg.AgentId);
+            string secret = UsesCertificate ? null : cfg.Secret;
+            if (secret != null) req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", secret);
+            HttpResponseMessage resp;
+            try
+            {
+                resp = http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                var inner = e is HttpRequestException && e.InnerException != null ? e.InnerException : e;
+                throw new GatewayException(0, "download from " + Server + " failed: " + (inner is TaskCanceledException ? "timed out" : inner.Message));
+            }
+            using (resp)
+            {
+                if ((int)resp.StatusCode != 200)
+                {
+                    string message = Json.Str(Json.Parse(resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()), "error");
+                    throw new GatewayException((int)resp.StatusCode, message ?? $"Setu answered HTTP {(int)resp.StatusCode}.");
+                }
+                using (var input = resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+                using (var output = new System.IO.FileStream(target, System.IO.FileMode.Create, System.IO.FileAccess.Write))
+                    input.CopyTo(output, 65536);
+            }
+        }
 
         /// <summary>body = {"messages":[...]} built from the disk buffer without re-parsing the messages</summary>
         public IDictionary<string, object> PostReadings(AgentConfig cfg, string body) =>

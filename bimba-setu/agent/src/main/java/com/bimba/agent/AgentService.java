@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The service (systemd unit bimba-site-agent, or `bimba-site-agent run` in a container): heartbeat loop with the
- * inventory every 10 minutes, client certificate renewal and the edge collector. Stops on SIGTERM; exits with
+ * inventory every 10 minutes, client certificate renewal, the edge collector and automatic updates ({@link Updater}). Stops on SIGTERM; exits with
  * {@link #REVOKED} when the organization removed this computer (the unit does not restart on that code).
  */
 final class AgentService {
@@ -43,6 +43,8 @@ final class AgentService {
                 + "): agent " + cfg.agentId + ", organization " + cfg.orgSlug + ", Setu " + cfg.server);
         Session session = new Session(cfg, true);
         EdgeCollector edge = new EdgeCollector(cfg, session::client, stop);
+        Updater updater = new Updater(cfg, session::client);
+        updater.start();
         Log.info(session.client().usesCertificate
                 ? "signing in with client certificate " + cfg.certSha256 + " (valid until " + cfg.certNotAfter + ")"
                 : "signing in with the agent secret");
@@ -60,6 +62,10 @@ final class AgentService {
                         lastFull = Instant.now();
                     }
                     edge.onHeartbeat(resp);
+                    JsonObject update = Json.obj(resp, "update");
+                    if (update != null) {
+                        updater.offer(update);                  // a newer installer: run over this agent by the root updater
+                    }
                     if (failures > 0) {
                         Log.info("gateway reachable again after " + failures + " failed heartbeat(s)");
                     }

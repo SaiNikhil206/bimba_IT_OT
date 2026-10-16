@@ -10,6 +10,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.bimba.setu.agents.AgentSources;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -57,12 +59,16 @@ public class SecurityService {
     private final SetuService setu;
     private final Db db;
     private final OrgService orgs;
+    private final Grants grants;
+    private final ObjectProvider<AgentSources> sources;
     private final FailureLimiter ipFailures = new FailureLimiter();
 
-    public SecurityService(SetuService setu, Db db, OrgService orgs) {
+    public SecurityService(SetuService setu, Db db, OrgService orgs, Grants grants, ObjectProvider<AgentSources> sources) {
         this.setu = setu;
         this.db = db;
         this.orgs = orgs;
+        this.grants = grants;
+        this.sources = sources;
     }
 
     /** HTTP status + message (+ machine-readable code) for the API. */
@@ -79,13 +85,31 @@ public class SecurityService {
 
     /**
      * The signed-in user of one request (the Spring Security principal). orgId = the organization the session works in
-     * (null only for a platform admin while no organization exists); permissions are the user's in that organization.
+     * (null only for a platform admin while no organization exists); permissions are the user's in that organization,
+     * scopes = where the scoped ones hold when the user has them only through limited role assignments.
      */
     public record Principal(long userId, String username, String name, String firstName, String lastName, String email,
-                            boolean superuser, Set<String> permissions, boolean mustChangePassword, String sessionId,
+                            boolean superuser, Set<String> permissions, Map<String, Scope> scopes, boolean mustChangePassword, String sessionId,
                             Long orgId, String orgSlug, String orgName, Long avatarVersion) {
+        /** held somewhere in the organization */
         public boolean can(Permission p) {
             return permissions.contains(p.key);
+        }
+
+        /** held for the whole organization */
+        public boolean everywhere(Permission p) {
+            return can(p) && !scopes.containsKey(p.key);
+        }
+
+        /** where it holds: null = everywhere (when held at all) */
+        public Scope scope(Permission p) {
+            return scopes.get(p.key);
+        }
+
+        /** held for this place: a site agent (its id and site) and, for machine things, one of its machines */
+        public boolean allows(Permission p, String agentId, String site, String machine) {
+            Scope s = scopes.get(p.key);
+            return can(p) && (s == null || s.covers(agentId, site, machine));
         }
 
         /** the organization every organization-scoped call works in */
@@ -106,6 +130,9 @@ public class SecurityService {
             m.put("email", email);
             m.put("platformAdmin", superuser);
             m.put("permissions", permissions);
+            Map<String, Object> sc = new LinkedHashMap<>();
+            scopes.forEach((k, v) -> sc.put(k, v.json()));
+            m.put("scopes", sc);
             m.put("mustChangePassword", mustChangePassword);
             m.put("avatarUrl", avatarUrl(userId, avatarVersion));
             if (orgId == null) {
@@ -256,7 +283,8 @@ public class SecurityService {
         Long orgId = (Long) row[10];
         String orgSlug = (String) row[11];
         String orgName = (String) row[12];
-        Set<String> perms = orgId == null ? (superuser ? permissions(userId, true, 0) : Set.of()) : permissions(userId, superuser, orgId);
+        Grants.Access granted = orgId == null ? (superuser ? grants.access(userId, true, 0) : Grants.Access.NONE) : grants.access(userId, superuser, orgId);
+        Set<String> perms = granted.permissions();
         if (perms.isEmpty() || orgId == null) {
             // removed from this organization (or it was deleted): continue in another organization of the user
             List<OrgService.Access> access = orgs.access(userId, superuser);
@@ -269,7 +297,8 @@ public class SecurityService {
                 orgId = next.id();
                 orgSlug = next.slug();
                 orgName = next.name();
-                perms = permissions(userId, superuser, orgId);
+                granted = grants.access(userId, superuser, orgId);
+                perms = granted.permissions();
             }
         }
         if (perms.isEmpty()) {
@@ -279,7 +308,7 @@ public class SecurityService {
         String last = (String) row[3];
         String name = (first + " " + last).trim();
         return new Principal(userId, username, name.isEmpty() ? username : name, first, last, (String) row[4], superuser,
-                perms, (Boolean) row[9], id, orgId, orgSlug, orgName, (Long) row[13]);
+                perms, granted.scopes(), (Boolean) row[9], id, orgId, orgSlug, orgName, (Long) row[13]);
     }
 
     /** The organizations the signed-in user can switch to, with their roles in each. */
@@ -303,29 +332,6 @@ public class SecurityService {
     public void logout(Principal p, String ip) {
         db.sql("UPDATE {s}.bimba_gw_session SET revoked_at = now() WHERE id = ?").param(p.sessionId()).update();
         audit(p, "logout", p.username(), true, ip, Map.of());
-    }
-
-    /** the user's permissions in one organization (platform admins: all of them, everywhere) */
-    private Set<String> permissions(long userId, boolean superuser, long orgId) {
-        Set<String> out = new LinkedHashSet<>();
-        List<Object[]> rows = superuser ? List.of() : db.sql("SELECT r.permissions::text, (r.builtin AND r.name = ?) FROM {s}.bimba_gw_user_role ur"
-                        + " JOIN {s}.bimba_gw_role r ON r.id = ur.role_id WHERE ur.user_id = ? AND ur.org_id = ?").params(ADMIN_ROLE, userId, orgId)
-                .query((rs, n) -> new Object[]{rs.getString(1), rs.getBoolean(2)}).list();
-        // the locked Administrator role also gets the permissions added in later versions
-        if (superuser || rows.stream().anyMatch(r -> (Boolean) r[1])) {
-            for (Permission p : Permission.values()) {
-                out.add(p.key);
-            }
-            return out;
-        }
-        for (Object[] r : rows) {
-            for (JsonElement e : Json.GSON.fromJson((String) r[0], JsonArray.class)) {
-                if (Permission.of(e.getAsString()) != null) {
-                    out.add(e.getAsString());
-                }
-            }
-        }
-        return out;
     }
 
     // ------------------------------------------------------------------ profile
@@ -466,7 +472,7 @@ public class SecurityService {
         // accounts made outside Setu (Django) have no profile yet; the profile holds the user's public id
         db.sql("INSERT INTO {s}.bimba_gw_user_profile (user_id) SELECT m.user_id FROM {s}.bimba_org_member m WHERE m.org_id = ?"
                 + " ON CONFLICT (user_id) DO NOTHING").param(org).update();
-        return db.sql("SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.is_active, u.is_superuser,"
+        List<Map<String, Object>> list = db.sql("SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.is_active, u.is_superuser,"
                         + " u.last_login, u.date_joined, COALESCE(p.must_change_password, false),"
                         + " (p.locked_until IS NOT NULL AND p.locked_until > now()), p.last_login_ip,"
                         + " COALESCE((SELECT json_agg(json_build_object('id', r.id, 'name', r.name) ORDER BY r.name) FROM {s}.bimba_gw_user_role ur"
@@ -505,6 +511,46 @@ public class SecurityService {
                     m.put("avatarUrl", avatarUrl(rs.getLong(1), rs.getObject(16, Long.class)));
                     return m;
                 }).list();
+        addAccess(list, org);
+        return list;
+    }
+
+    /**
+     * Each member's roles with their scopes, and what they may do in the organization: every permission with where it
+     * holds (null = everywhere) and the roles that give it; dutyConflicts = operational permissions next to the Auditor role.
+     */
+    private void addAccess(List<Map<String, Object>> members, long org) {
+        Map<Long, List<Grants.Assignment>> all = grants.assignments(org);
+        List<Scope> scopes = new ArrayList<>();
+        all.values().forEach(l -> l.forEach(a -> scopes.add(a.scope())));
+        Map<String, String> agentNames = agentNames(org, scopes);
+        for (Map<String, Object> m : members) {
+            List<Grants.Assignment> as = all.getOrDefault((Long) m.get("id"), List.of());
+            List<Map<String, Object>> roles = new ArrayList<>();
+            for (Grants.Assignment a : as) {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("id", a.roleId());
+                r.put("name", a.roleName());
+                r.put("scope", a.scope() == null ? null : a.scope().json());
+                r.put("scopeText", a.scope() == null ? null : scopeText(a.scope(), agentNames));
+                roles.add(r);
+            }
+            m.put("roles", roles);
+            boolean platform = Boolean.TRUE.equals(m.get("platformAdmin"));
+            Grants.Access access = platform ? grants.access((Long) m.get("id"), true, org) : Grants.combine(as);
+            List<Map<String, Object>> perms = new ArrayList<>();
+            for (String k : access.permissions()) {
+                Map<String, Object> x = new LinkedHashMap<>();
+                x.put("key", k);
+                Scope sc = access.scope(k);
+                x.put("scope", sc == null ? null : sc.json());
+                x.put("scopeText", sc == null ? null : scopeText(sc, agentNames));
+                x.put("via", platform ? List.of("Platform admin") : as.stream().filter(a -> a.effective().contains(k)).map(Grants.Assignment::roleName).toList());
+                perms.add(x);
+            }
+            m.put("permissions", perms);
+            m.put("dutyConflicts", platform ? List.of() : List.copyOf(Grants.auditorConflicts(as)));
+        }
     }
 
     /**
@@ -514,8 +560,9 @@ public class SecurityService {
     public Map<String, Object> createUser(Principal actor, JsonObject body, String ip) throws ApiException {
         long org = actor.org();
         String email = text(body, "email", 254).toLowerCase(Locale.ROOT);
-        List<Long> roles = roleIds(body, org);
-        checkGrantable(actor, roles);
+        Map<Long, Scope> roles = assignmentsOf(body, org);
+        checkGrantable(actor, roles, Map.of(), org);
+        checkDuties(roles, org);
         if (body.has("existing") && body.get("existing").getAsBoolean()) {
             Long uid = db.sql("SELECT id FROM {s}.auth_user WHERE email <> '' AND lower(email) = ?").param(email)
                     .query(Long.class).optional().orElse(null);
@@ -531,7 +578,7 @@ public class SecurityService {
                 setRoles(uid, org, roles);
                 return null;
             });
-            audit(actor, "user.add", email, true, ip, Map.of("roles", roleNames(roles)));
+            audit(actor, "user.add", email, true, ip, Map.of("roles", describe(roles, org)));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("id", uid);
             out.put("email", email);
@@ -558,7 +605,7 @@ public class SecurityService {
             throw new ApiException(409, "exists", "An account with the e-mail address " + email + " already exists. To give it access to "
                     + actor.orgName() + ", add it as an existing account.");
         }
-        audit(actor, "user.create", email, true, ip, Map.of("roles", roleNames(roles)));
+        audit(actor, "user.create", email, true, ip, Map.of("roles", describe(roles, org)));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", id);
         out.put("email", email);
@@ -586,17 +633,20 @@ public class SecurityService {
         if (!active && actor.userId() == id) {
             throw new ApiException(400, "self", "You cannot disable your own account.");
         }
-        List<Long> roles = roleIds(body, org);
-        List<Long> current = rolesOf(id, org);
-        List<String> before = roleNames(current);
-        List<String> after = roleNames(roles);
-        // grants checked only for roles being added, so an admin can still edit someone with roles they cannot grant
-        List<Long> added = new ArrayList<>(roles);
-        added.removeAll(current);
-        checkGrantable(actor, added);
-        if (actor.userId() == id && !actor.superuser() && !permissionsOf(roles).contains(Permission.USERS_MANAGE.key)) {
-            throw new ApiException(400, "self", "You cannot remove your own user management permission.");
+        Map<Long, Scope> current = currentOf(id, org);
+        // without roles in the request the member keeps theirs
+        Map<Long, Scope> roles = body.has("roles") || body.has("roleIds") ? assignmentsOf(body, org) : current;
+        List<String> before = describe(current, org);
+        List<String> after = describe(roles, org);
+        // grants checked only for assignments being added or changed, so an admin can still edit someone with roles they cannot grant
+        if (actor.userId() == id && !actor.superuser()) {
+            checkSelfGrant(current, roles, org);
+            if (!Grants.combine(withScopes(roles)).can(Permission.USERS_MANAGE.key)) {
+                throw new ApiException(400, "self", "You cannot remove your own user management permission.");
+            }
         }
+        checkGrantable(actor, roles, current, org);
+        checkDuties(roles, org);
         db.tx(() -> {
             if (accountChanged) {
                 db.sql("UPDATE {s}.auth_user SET first_name = ?, last_name = ?, email = ?, is_active = ? WHERE id = ?")
@@ -636,9 +686,10 @@ public class SecurityService {
         if (actor.userId() == id) {
             throw new ApiException(400, "self", "You cannot remove yourself from the organization.");
         }
-        List<String> had = roleNames(rolesOf(id, org));
+        List<String> had = describe(currentOf(id, org), org);
         db.tx(() -> {
             db.sql("DELETE FROM {s}.bimba_gw_user_role WHERE user_id = ? AND org_id = ?").params(id, org).update();
+            grants.saveScopes(org, id, Map.of());
             db.sql("DELETE FROM {s}.bimba_org_member WHERE user_id = ? AND org_id = ?").params(id, org).update();
             return null;
         });
@@ -718,8 +769,33 @@ public class SecurityService {
 
     // ------------------------------------------------------------------ roles (built-in = shared, custom = this organization's)
 
+    /**
+     * The roles this organization can use. persona = the BRD persona a built-in role stands for; holders (for those who
+     * may see members) = who has the role here and where.
+     */
     public List<Map<String, Object>> roles(Principal actor) throws ApiException {
         long org = actor.org();
+        Map<Long, List<Map<String, Object>>> holders = new LinkedHashMap<>();
+        boolean seeMembers = actor.can(Permission.USERS_VIEW) || actor.can(Permission.USERS_MANAGE);
+        if (seeMembers) {
+            Map<Long, List<Grants.Assignment>> all = grants.assignments(org);
+            List<Scope> scopes = new ArrayList<>();
+            all.values().forEach(l -> l.forEach(a -> scopes.add(a.scope())));
+            Map<String, String> agentNames = agentNames(org, scopes);
+            db.sql("SELECT u.id, u.email, trim(u.first_name || ' ' || u.last_name) FROM {s}.bimba_org_member m JOIN {s}.auth_user u ON u.id = m.user_id"
+                            + " WHERE m.org_id = ? ORDER BY lower(u.email)").param(org)
+                    .query((rs, n) -> {
+                        for (Grants.Assignment a : all.getOrDefault(rs.getLong(1), List.of())) {
+                            Map<String, Object> h = new LinkedHashMap<>();
+                            h.put("id", rs.getLong(1));
+                            h.put("email", rs.getString(2));
+                            h.put("name", rs.getString(3).isEmpty() ? rs.getString(2) : rs.getString(3));
+                            h.put("scopeText", a.scope() == null ? null : scopeText(a.scope(), agentNames));
+                            holders.computeIfAbsent(a.roleId(), k -> new ArrayList<>()).add(h);
+                        }
+                        return null;
+                    }).list();
+        }
         return db.sql("SELECT r.id, r.name, r.description, r.permissions::text, r.builtin, r.org_id IS NULL,"
                         + " (SELECT count(*) FROM {s}.bimba_gw_user_role ur WHERE ur.role_id = r.id AND ur.org_id = ?), r.uid FROM {s}.bimba_gw_role r"
                         + " WHERE r.org_id IS NULL OR r.org_id = ? ORDER BY r.builtin DESC, r.org_id IS NOT NULL, lower(r.name)")
@@ -738,6 +814,12 @@ public class SecurityService {
                     m.put("shared", shared);
                     m.put("editable", !locked && (!shared || actor.superuser()));
                     m.put("members", rs.getLong(7));
+                    RoleCatalog.Persona persona = shared ? RoleCatalog.persona(rs.getString(2), rs.getBoolean(5)) : null;
+                    m.put("persona", persona == null ? null : RoleCatalog.json(persona));
+                    m.put("auditor", rs.getBoolean(5) && shared && RoleCatalog.AUDITOR_ROLE.equalsIgnoreCase(rs.getString(2)));
+                    if (seeMembers) {
+                        m.put("holders", holders.getOrDefault(rs.getLong(1), List.of()));
+                    }
                     return m;
                 }).list();
     }
@@ -750,20 +832,29 @@ public class SecurityService {
         }
         String description = text(body, "description", 300);
         List<String> perms = new ArrayList<>();
+        Set<String> had = id == null ? Set.of() : db.sql("SELECT permissions::text FROM {s}.bimba_gw_role WHERE id = ? AND (org_id IS NULL OR org_id = ?)")
+                .params(id, org).query(String.class).optional().map(Grants::keys).orElse(Set.of());
         if (body.has("permissions") && body.get("permissions").isJsonArray()) {
             for (JsonElement e : body.getAsJsonArray("permissions")) {
                 Permission p = Permission.of(e.getAsString());
                 if (p == null) {
                     throw new ApiException(400, "permission", "Unknown permission " + e.getAsString());
                 }
-                if (!actor.can(p)) {
+                // only what is being added is checked, so a role can still be edited by someone who lacks part of it
+                if (!had.contains(p.key) && !actor.can(p)) {
                     throw new ApiException(403, "grant", "You cannot grant a permission you do not have: " + p.label);
+                }
+                if (!had.contains(p.key) && p.scoped && !actor.everywhere(p)) {
+                    throw new ApiException(403, "grant_scope", "You hold \"" + p.label + "\" only for some sites, site agents or machines, so you cannot"
+                            + " add it to a role (a role holds wherever it is assigned).");
                 }
                 if (!perms.contains(p.key)) {
                     perms.add(p.key);
                 }
             }
         }
+        // the rest of the permissions sort like the catalog
+        perms.sort(java.util.Comparator.comparingInt(k -> Permission.of(k).ordinal()));
         // names are unique among the roles this organization sees (the shared built-in ones and its own)
         long clash = db.sql("SELECT count(*) FROM {s}.bimba_gw_role WHERE lower(name) = lower(?) AND (org_id IS NULL OR org_id = ?) AND id <> ?")
                 .params(name, org, id == null ? -1L : id).query(Long.class).single();
@@ -795,6 +886,7 @@ public class SecurityService {
             if ((Boolean) old[1] && !old[0].equals(name)) {
                 throw new ApiException(400, "builtin", "Built-in roles keep their name.");
             }
+            checkRoleDuties(id, (String) old[0], (Boolean) old[1] && (Boolean) old[3], perms);
             db.sql("UPDATE {s}.bimba_gw_role SET name = ?, description = ?, permissions = ?::jsonb WHERE id = ?")
                     .params(name, description, permsJson, id).update();
             Map<String, Object> detail = new LinkedHashMap<>();
@@ -832,81 +924,403 @@ public class SecurityService {
         audit(actor, "role.delete", (String) old[0], true, ip, Map.of("removedFromUsers", members));
     }
 
-    /** the role ids of the request, each one a role this organization can use */
-    private List<Long> roleIds(JsonObject body, long org) throws ApiException {
-        List<Long> ids = new ArrayList<>();
-        if (body.has("roleIds") && body.get("roleIds").isJsonArray()) {
+    /**
+     * The role assignments of the request, each a role this organization can use, with its scope (null = the whole
+     * organization): roles [{id, scope?}] or, from older consoles, roleIds [id]. A scope on a role without scoped
+     * permissions would change nothing, so it is dropped; the site agents of a scope must be the organization's.
+     */
+    private Map<Long, Scope> assignmentsOf(JsonObject body, long org) throws ApiException {
+        Map<Long, Scope> out = new LinkedHashMap<>();
+        if (body.has("roles") && body.get("roles").isJsonArray()) {
+            for (JsonElement e : body.getAsJsonArray("roles")) {
+                if (e.isJsonObject() && e.getAsJsonObject().has("id")) {
+                    JsonElement se = e.getAsJsonObject().get("scope");
+                    Scope sc = Scope.parse(se);
+                    // "only some places" with none chosen must not turn into the whole organization
+                    if (se != null && se.isJsonObject() && sc == null) {
+                        throw new ApiException(400, "scope", "Choose at least one site, site agent or machine for each role given only for some places.");
+                    }
+                    out.putIfAbsent(e.getAsJsonObject().get("id").getAsLong(), sc);
+                } else if (e.isJsonPrimitive()) {
+                    out.putIfAbsent(e.getAsLong(), null);
+                }
+            }
+        } else if (body.has("roleIds") && body.get("roleIds").isJsonArray()) {
             for (JsonElement e : body.getAsJsonArray("roleIds")) {
-                long rid = e.getAsLong();
-                if (!ids.contains(rid)) {
-                    ids.add(rid);
+                out.putIfAbsent(e.getAsLong(), null);
+            }
+        }
+        if (out.isEmpty()) {
+            return out;
+        }
+        long known = db.sql("SELECT count(*) FROM {s}.bimba_gw_role WHERE id = ANY (?::bigint[]) AND (org_id IS NULL OR org_id = ?)")
+                .params(out.keySet().toArray(new Long[0]), org).query(Long.class).single();
+        if (known != out.size()) {
+            throw new ApiException(400, "role", "Unknown role.");
+        }
+        Map<Long, Grants.Assignment> defs = grants.roles(out.keySet());
+        Map<String, String> agents = null;
+        for (Map.Entry<Long, Scope> e : out.entrySet()) {
+            Scope sc = e.getValue();
+            if (sc == null) {
+                continue;
+            }
+            if (defs.get(e.getKey()).effective().stream().map(Permission::of).noneMatch(p -> p != null && p.scoped)) {
+                e.setValue(null);
+                continue;
+            }
+            if (agents == null) {
+                agents = grants.agentSites(org);
+            }
+            for (String a : sc.agents()) {
+                if (!agents.containsKey(a)) {
+                    throw new ApiException(400, "scope", "The scope names a site agent that is not in this organization.");
                 }
             }
         }
-        if (!ids.isEmpty()) {
-            long known = db.sql("SELECT count(*) FROM {s}.bimba_gw_role WHERE id = ANY (?::bigint[]) AND (org_id IS NULL OR org_id = ?)")
-                    .params(ids.toArray(new Long[0]), org).query(Long.class).single();
-            if (known != ids.size()) {
-                throw new ApiException(400, "role", "Unknown role.");
-            }
-        }
-        return ids;
-    }
-
-    private List<Long> rolesOf(long userId, long org) {
-        return db.sql("SELECT role_id FROM {s}.bimba_gw_user_role WHERE user_id = ? AND org_id = ?").params(userId, org).query(Long.class).list();
-    }
-
-    /** what the roles allow together; the locked Administrator role allows everything */
-    private Set<String> permissionsOf(List<Long> roleIds) {
-        Set<String> out = new LinkedHashSet<>();
-        if (roleIds.isEmpty()) {
-            return out;
-        }
-        db.sql("SELECT permissions::text, (builtin AND name = ?) FROM {s}.bimba_gw_role WHERE id = ANY (?::bigint[])")
-                .params(ADMIN_ROLE, roleIds.toArray(new Long[0]))
-                .query((rs, n) -> new Object[]{rs.getString(1), rs.getBoolean(2)}).list()
-                .forEach(r -> {
-                    if ((Boolean) r[1]) {
-                        Arrays.stream(Permission.values()).forEach(p -> out.add(p.key));
-                    } else {
-                        Json.GSON.fromJson((String) r[0], JsonArray.class).forEach(e -> out.add(e.getAsString()));
-                    }
-                });
         return out;
     }
 
-    private List<String> roleNames(List<Long> roleIds) {
-        if (roleIds.isEmpty()) {
-            return List.of();
-        }
-        return db.sql("SELECT name FROM {s}.bimba_gw_role WHERE id = ANY (?::bigint[]) ORDER BY name").param(roleIds.toArray(new Long[0]))
-                .query(String.class).list();
+    /** the member's role assignments in the organization: role id -> scope (null = everywhere) */
+    private Map<Long, Scope> currentOf(long userId, long org) {
+        Map<Long, Scope> out = new LinkedHashMap<>();
+        grants.assignments(userId, org).forEach(a -> out.put(a.roleId(), a.scope()));
+        return out;
     }
 
-    /** Nobody can hand out a permission they do not have (no escalation through user management). */
-    private void checkGrantable(Principal actor, List<Long> roleIds) throws ApiException {
-        for (String p : permissionsOf(roleIds)) {
-            if (!actor.permissions().contains(p)) {
-                Permission perm = Permission.of(p);
-                throw new ApiException(403, "grant", "You cannot assign a role that grants a permission you do not have: "
-                        + (perm == null ? p : perm.label));
+    private List<Grants.Assignment> withScopes(Map<Long, Scope> roles) {
+        Map<Long, Grants.Assignment> defs = grants.roles(roles.keySet());
+        List<Grants.Assignment> out = new ArrayList<>();
+        roles.forEach((id, sc) -> {
+            Grants.Assignment a = defs.get(id);
+            if (a != null) {
+                out.add(a.withScope(sc));
+            }
+        });
+        return out;
+    }
+
+    /** "Supervisor (sites: Plant A; machines: Press 1)" per assignment, for the audit log */
+    private List<String> describe(Map<Long, Scope> roles, long org) {
+        Map<String, String> agentNames = agentNames(org, roles.values());
+        List<String> out = new ArrayList<>();
+        for (Grants.Assignment a : withScopes(roles)) {
+            out.add(a.roleName() + (a.scope() == null ? "" : " (" + scopeText(a.scope(), agentNames) + ")"));
+        }
+        out.sort(String.CASE_INSENSITIVE_ORDER);
+        return out;
+    }
+
+    /** the display names of the organization's site agents, when any scope names agents */
+    private Map<String, String> agentNames(long org, java.util.Collection<Scope> scopes) {
+        Map<String, String> names = new LinkedHashMap<>();
+        if (scopes.stream().anyMatch(sc -> sc != null && !sc.agents().isEmpty())) {
+            db.sql("SELECT id::text, display_name FROM {s}.bimba_agent WHERE org_id = ?").param(org)
+                    .query((rs, n) -> names.put(rs.getString(1), rs.getString(2))).list();
+        }
+        return names;
+    }
+
+    static String scopeText(Scope sc, Map<String, String> agentNames) {
+        List<String> parts = new ArrayList<>();
+        if (!sc.sites().isEmpty()) {
+            parts.add("sites: " + String.join(", ", sc.sites()));
+        }
+        if (!sc.agents().isEmpty()) {
+            parts.add("site agents: " + String.join(", ", sc.agents().stream().map(a -> agentNames.getOrDefault(a, a)).toList()));
+        }
+        if (!sc.machines().isEmpty()) {
+            parts.add("machines: " + String.join(", ", sc.machines()));
+        }
+        return String.join("; ", parts);
+    }
+
+    /**
+     * Nobody can hand out a permission they do not have (no escalation through user management); someone who holds a
+     * scoped permission only for some places can give it only for places inside their own scope. Only assignments being
+     * added or changed are checked.
+     */
+    private void checkGrantable(Principal actor, Map<Long, Scope> next, Map<Long, Scope> current, long org) throws ApiException {
+        Map<Long, Grants.Assignment> defs = grants.roles(next.keySet());
+        for (Map.Entry<Long, Scope> e : next.entrySet()) {
+            if (current.containsKey(e.getKey()) && java.util.Objects.equals(current.get(e.getKey()), e.getValue())) {
+                continue;
+            }
+            Grants.Assignment a = defs.get(e.getKey());
+            for (String k : a.effective()) {
+                Permission p = Permission.of(k);
+                if (!actor.can(p)) {
+                    throw new ApiException(403, "grant", "You cannot assign a role that grants a permission you do not have: " + p.label);
+                }
+                Scope mine = p.scoped ? actor.scope(p) : null;
+                if (mine != null && (e.getValue() == null || !within(e.getValue(), mine, org))) {
+                    denied(actor, p, a.roleName(), "assigning a role beyond the actor's own scope");
+                    throw new ApiException(403, "grant_scope", "You hold \"" + p.label + "\" only for some sites, site agents or machines, so you can give the role "
+                            + a.roleName() + " only for places inside your own scope.");
+                }
             }
         }
     }
 
     /**
-     * The user's roles in one organization, and their membership there for BIMBA Operations and the site agent
-     * installer: "admin" (may create enrollment tokens) when the roles allow managing site agents, else "member".
+     * Duty separation (BRD 4.5): nobody adds a role to themselves or widens where one of their roles holds, even a role
+     * whose permissions they already have through another one. Another member who manages users has to do it, so nobody
+     * makes themselves an approver. Taking roles away is fine (except one's own user management, checked separately).
      */
-    private void setRoles(long userId, long org, List<Long> roles) {
+    private void checkSelfGrant(Map<Long, Scope> current, Map<Long, Scope> next, long org) throws ApiException {
+        Map<Long, Grants.Assignment> defs = grants.roles(next.keySet());
+        for (Map.Entry<Long, Scope> e : next.entrySet()) {
+            boolean added = !current.containsKey(e.getKey());
+            Scope was = current.get(e.getKey());
+            boolean wider = !added && was != null && (e.getValue() == null || !within(e.getValue(), was, org));
+            if (added || wider) {
+                throw new ApiException(403, "self_grant", "Duty separation: you cannot " + (added ? "give yourself the role " : "widen where you hold the role ")
+                        + defs.get(e.getKey()).roleName() + ". Another member who manages users has to do that.");
+            }
+        }
+    }
+
+    /** Duty separation (BRD 4.5): an Auditor holds no operational permission in the same organization. */
+    private void checkDuties(Map<Long, Scope> roles, long org) throws ApiException {
+        Set<String> c = Grants.auditorConflicts(withScopes(roles));
+        if (!c.isEmpty()) {
+            throw new ApiException(409, "duty", "Duty separation: an Auditor holds no operational permission in the same organization. Remove the "
+                    + RoleCatalog.AUDITOR_ROLE + " role, or the roles that give: " + labels(c) + ".");
+        }
+    }
+
+    /**
+     * Duty separation when a role's permissions change: the built-in Auditor role takes no operational permission, and
+     * no member anywhere may end up with an operational permission next to the Auditor role.
+     */
+    private void checkRoleDuties(long roleId, String name, boolean builtinShared, List<String> perms) throws ApiException {
+        if (builtinShared && RoleCatalog.AUDITOR_ROLE.equalsIgnoreCase(name)) {
+            List<String> op = perms.stream().filter(Grants.OPERATIONAL::contains).toList();
+            if (!op.isEmpty()) {
+                throw new ApiException(409, "duty", "Duty separation: the Auditor role holds no operational permission, so it cannot get: " + labels(op) + ".");
+            }
+        }
+        List<String> who = new ArrayList<>();
+        for (Long org : db.sql("SELECT DISTINCT org_id FROM {s}.bimba_gw_user_role WHERE role_id = ?").param(roleId).query(Long.class).list()) {
+            Map<Long, List<Grants.Assignment>> all = grants.assignments(org);
+            for (Map.Entry<Long, List<Grants.Assignment>> e : all.entrySet()) {
+                List<Grants.Assignment> next = e.getValue().stream()
+                        .map(a -> a.roleId() == roleId ? new Grants.Assignment(a.roleId(), a.roleName(), a.builtin(), new LinkedHashSet<>(perms), false, a.scope()) : a)
+                        .toList();
+                if (!Grants.auditorConflicts(next).isEmpty()) {
+                    who.add(db.sql("SELECT email FROM {s}.auth_user WHERE id = ?").param(e.getKey()).query(String.class).single());
+                }
+            }
+        }
+        if (!who.isEmpty()) {
+            throw new ApiException(409, "duty", "Duty separation: " + String.join(", ", who.stream().limit(3).toList())
+                    + (who.size() > 3 ? " and " + (who.size() - 3) + " more" : "") + " hold this role next to the Auditor role, and an Auditor"
+                    + " holds no operational permission. Change their roles first.");
+        }
+    }
+
+    // ------------------------------------------------------------------ duty separation + access review
+
+    private static Map<String, Object> rule(String id, String title, String detail, boolean enforced) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("title", title);
+        m.put("detail", detail);
+        m.put("enforced", enforced);
+        return m;
+    }
+
+    /**
+     * The duty separation rules (BRD 4.5): what Setu enforces, what is still to come, and the members who break a rule
+     * today (possible only for data changed outside Setu, or from before the rule).
+     */
+    public Map<String, Object> duties(Principal actor) throws ApiException {
+        List<Map<String, Object>> rules = List.of(
+                rule("own-command", "No approving your own command",
+                        "A machine command that needs approval waits for a second person; the one who asked for it cannot approve it.", true),
+                rule("self-grant", "No giving yourself access",
+                        "Nobody adds a role to themselves or widens where their roles hold, even with permissions they already have. Another"
+                                + " member who manages users has to, so nobody can make themselves an approver.", true),
+                rule("grant-limit", "No granting beyond your own access",
+                        "Roles, permissions and scopes can only be given by someone who holds them, and only within their own scope.", true),
+                rule("auditor", "Auditors stay independent",
+                        "A member with the Auditor role holds no operational permission in the same organization: no machine commands, data"
+                                + " sources, site agents, pipelines, destinations, quarantine or tag registry changes.", true),
+                rule("scope", "Everyone acts only in their scope",
+                        "Site agent, machine and command permissions given for some sites, site agents or machines hold only there,"
+                                + " approvals included. Refusals are written to the audit log.", true),
+                rule("safety-config", "Four-eyes on writable tags and limits",
+                        "A change to a data source's Allow machine commands switch, or to a tag's writable flag, write limits, approval"
+                                + " setting (and, while it is writable, its address, data type, scaling or unit) becomes a change request. It"
+                                + " takes effect only after another person with Approve machine commands for that site agent and machine"
+                                + " approves it; whoever proposed it cannot.", true),
+                rule("break-glass", "Break-glass access",
+                        "Planned: time-boxed emergency access with a reason, an alert to administrators and automatic expiry.", false),
+                rule("step-up", "Fresh sign-in for sensitive actions",
+                        "Planned with single sign-on and multi-factor sign-in: approvals, the kill switch and role changes ask again.", false));
+        List<Map<String, Object>> violations = new ArrayList<>();
+        if (actor.can(Permission.USERS_VIEW) || actor.can(Permission.USERS_MANAGE) || actor.can(Permission.ROLES_MANAGE)) {
+            for (Map<String, Object> u : users(actor)) {
+                List<?> c = (List<?>) u.get("dutyConflicts");
+                if (!c.isEmpty()) {
+                    Map<String, Object> v = new LinkedHashMap<>();
+                    v.put("rule", "auditor");
+                    v.put("userId", u.get("id"));
+                    v.put("uid", u.get("uid"));
+                    v.put("email", u.get("email"));
+                    v.put("permissions", c);
+                    violations.add(v);
+                }
+            }
+        }
+        List<Map<String, Object>> personas = new ArrayList<>();
+        for (RoleCatalog.Persona p : RoleCatalog.PERSONAS) {
+            Map<String, Object> m = RoleCatalog.json(p);
+            m.put("role", p.role());
+            personas.add(m);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("rules", rules);
+        m.put("violations", violations);
+        m.put("personas", personas);
+        m.put("personasNotShipped", RoleCatalog.NOT_SHIPPED);
+        return m;
+    }
+
+    /** the places a role assignment can be limited to: the organization's sites, site agents and machines */
+    public Map<String, Object> places(Principal actor) throws ApiException {
+        long org = actor.org();
+        List<Map<String, Object>> agents = db.sql("SELECT id::text, display_name, coalesce(site, '') FROM {s}.bimba_agent"
+                        + " WHERE org_id = ? AND state = 'active' ORDER BY lower(display_name)").param(org)
+                .query((rs, n) -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", rs.getString(1));
+                    m.put("name", rs.getString(2));
+                    m.put("site", rs.getString(3));
+                    return m;
+                }).list();
+        List<String> sites = agents.stream().map(a -> ((String) a.get("site")).trim()).filter(x -> !x.isEmpty())
+                .collect(java.util.stream.Collectors.toCollection(() -> new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER))).stream().toList();
+        List<Map<String, Object>> machines = new ArrayList<>();
+        sources.getObject().machineAgents(org).forEach((name, agent) -> machines.add(Map.of("name", name, "agentId", agent == null ? "" : agent)));
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sites", sites);
+        m.put("agents", agents);
+        m.put("machines", machines);
+        return m;
+    }
+
+    /** the access review (BRD FR-RBAC-09) as CSV: every member, their roles and scopes, what they may do, last sign-in */
+    public String accessReviewCsv(Principal actor) throws ApiException {
+        StringBuilder b = new StringBuilder("Organization,E-mail,Name,Enabled,Platform admin,Last sign-in,Roles,Permissions,Duty separation\r\n");
+        for (Map<String, Object> u : users(actor)) {
+            List<String> roles = new ArrayList<>();
+            for (Object o : (List<?>) u.get("roles")) {
+                Map<?, ?> r = (Map<?, ?>) o;
+                roles.add(r.get("name") + (r.get("scopeText") == null ? "" : " (" + r.get("scopeText") + ")"));
+            }
+            List<String> perms = new ArrayList<>();
+            for (Object o : (List<?>) u.get("permissions")) {
+                Map<?, ?> x = (Map<?, ?>) o;
+                perms.add(x.get("key") + (x.get("scopeText") == null ? "" : " (" + x.get("scopeText") + ")"));
+            }
+            String name = (u.get("firstName") + " " + u.get("lastName")).trim();
+            List<?> conflicts = (List<?>) u.get("dutyConflicts");
+            b.append(String.join(",", csv(actor.orgName()), csv((String) u.get("email")), csv(name),
+                    Boolean.TRUE.equals(u.get("active")) ? "yes" : "no", Boolean.TRUE.equals(u.get("platformAdmin")) ? "yes" : "no",
+                    csv(u.get("lastLogin") == null ? "" : (String) u.get("lastLogin")), csv(String.join("; ", roles)), csv(String.join("; ", perms)),
+                    csv(conflicts.isEmpty() ? "" : "Auditor with: " + String.join("; ", conflicts.stream().map(String::valueOf).toList()))))
+                    .append("\r\n");
+        }
+        return b.toString();
+    }
+
+    /** a CSV field; a leading = + - @ is neutralised so spreadsheets do not run it as a formula */
+    private static String csv(String v) {
+        String s = v == null ? "" : v;
+        if (!s.isEmpty() && "=+-@".indexOf(s.charAt(0)) >= 0) {
+            s = "'" + s;
+        }
+        return "\"" + s.replace("\"", "\"\"") + "\"";
+    }
+
+    private static String labels(java.util.Collection<String> keys) {
+        return String.join("; ", keys.stream().map(k -> Permission.of(k) == null ? k : Permission.of(k).label).toList());
+    }
+
+    /** is every place of inner also in outer (a site agent through its site, a machine through its agent) */
+    private boolean within(Scope inner, Scope outer, long org) {
+        Map<String, String> sites = grants.agentSites(org);
+        for (String site : inner.sites()) {
+            if (!Scope.has(outer.sites(), site)) {
+                return false;
+            }
+        }
+        for (String a : inner.agents()) {
+            if (!outer.covers(a, sites.get(a), null)) {
+                return false;
+            }
+        }
+        if (!inner.machines().isEmpty()) {
+            Map<String, String> machineAgents = sources.getObject().machineAgents(org);
+            for (String m : inner.machines()) {
+                String a = machineAgents.get(m);
+                if (!outer.covers(a, a == null ? null : sites.get(a), m)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The user's roles in one organization with their scopes, and their membership there for BIMBA Operations and the
+     * site agent installer: "admin" (may create enrollment tokens) when the roles allow enrolling site agents, else "member".
+     */
+    private void setRoles(long userId, long org, Map<Long, Scope> roles) {
         db.sql("DELETE FROM {s}.bimba_gw_user_role WHERE user_id = ? AND org_id = ?").params(userId, org).update();
-        for (Long r : roles) {
+        for (Long r : roles.keySet()) {
             db.sql("INSERT INTO {s}.bimba_gw_user_role (user_id, org_id, role_id) VALUES (?, ?, ?)").params(userId, org, r).update();
         }
-        String member = permissionsOf(roles).contains(Permission.AGENTS_MANAGE.key) ? "admin" : "member";
+        grants.saveScopes(org, userId, roles);
+        String member = Grants.combine(withScopes(roles)).can(Permission.AGENTS_ENROLL.key) ? "admin" : "member";
         db.sql("INSERT INTO {s}.bimba_org_member (org_id, user_id, role) VALUES (?, ?, ?)"
                 + " ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role").params(org, userId, member).update();
+    }
+
+    // ------------------------------------------------------------------ scoped checks
+
+    /**
+     * For calls about one site agent: the user holds the permission there (by the agent's site or id). An agent the
+     * organization does not have passes, so the call itself answers "not found".
+     */
+    public void require(Principal p, Permission perm, String agentId) throws ApiException {
+        if (!p.can(perm)) {
+            throw new ApiException(403, "forbidden", "Your roles do not allow: " + perm.label + ".");
+        }
+        if (!allowsAgent(p, perm, agentId)) {
+            throw outside(p, perm, "site agent " + agentId);
+        }
+    }
+
+    /** does the user hold the permission for this site agent (an unknown agent counts as allowed: it answers "not found") */
+    public boolean allowsAgent(Principal p, Permission perm, String agentId) throws ApiException {
+        Scope sc = p.scope(perm);
+        if (!p.can(perm) || sc == null) {
+            return p.can(perm);
+        }
+        String site = grants.siteOf(p.org(), agentId);
+        return site == null || sc.covers(agentId, site, null);
+    }
+
+    /** the refusal of a scoped call, written to the audit log (BRD FR-RBAC-11: denied decisions are audited too) */
+    public ApiException outside(Principal p, Permission perm, String target) {
+        denied(p, perm, target, "outside the scope of the user's roles");
+        return new ApiException(403, "scope", "Your roles allow \"" + perm.label + "\" only for some sites, site agents or machines, not for this one.");
+    }
+
+    private void denied(Principal p, Permission perm, String target, String reason) {
+        audit(p, "access.denied", target, false, "", Map.of("permission", perm.key, "reason", reason));
     }
 
     // ------------------------------------------------------------------ audit

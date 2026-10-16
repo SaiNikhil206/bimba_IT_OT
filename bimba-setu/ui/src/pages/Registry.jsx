@@ -12,7 +12,7 @@ const key = (machine, tag) => `${machine}/${tag}`;
 
 export default function Registry() {
   const { can } = useSession();
-  const manage = can("delivery.manage");
+  const manage = can("registry.manage");
   const toast = useToast();
   const { data, error, reload } = usePoll("registry", 0);
   const [q, setQ] = useState("");

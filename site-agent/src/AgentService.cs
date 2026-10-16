@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace Bimba.SiteAgent
 {
-    /// <summary>Windows service "BIMBASiteAgent": heartbeat loop + edge collector (data sources -> gateway).</summary>
+    /// <summary>Windows service "BIMBASiteAgent": heartbeat loop + edge collector (data sources -> gateway) + automatic updates.</summary>
     internal sealed class AgentService : ServiceBase
     {
         /// <summary>sent by the uninstaller: tell Setu, delete the certificate, stop reporting</summary>
@@ -213,6 +213,8 @@ namespace Bimba.SiteAgent
                     ? $"signing in with client certificate {cfg.CertThumbprint} (valid until {cfg.CertNotAfter})"
                     : "signing in with the agent secret");
                 edge.Start();
+                var updater = new Updater(cfg, () => session.Certificate);
+                updater.Start();
                 while (true)
                 {
                     int wait;
@@ -222,6 +224,8 @@ namespace Bimba.SiteAgent
                         var resp = session.Heartbeat(full ? Inventory.Collect(cfg.Server) : null);
                         if (full) lastFull = DateTime.UtcNow;
                         edge.OnHeartbeat(resp);
+                        var update = Json.Obj(resp, "update");
+                        if (update != null) updater.Offer(update);        // a newer installer: run over this agent by the updater service
                         if (failures > 0) Log.Info($"gateway reachable again after {failures} failed heartbeat(s)");
                         failures = 0;
                         wait = Math.Max(15, Math.Min(3600, Json.Int(resp, "heartbeatSeconds", cfg.HeartbeatSeconds)));

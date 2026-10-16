@@ -65,7 +65,7 @@ export default function Pipelines() {
   const [confirm, setConfirm] = useState(null);
   const [rejected, setRejected] = useState(null);   // pipeline whose rejected batches are open
   const [busy, setBusy] = useState(false);
-  const manage = can("delivery.manage");
+  const manage = can("pipelines.manage");
   const list = data?.pipelines ?? [];
   const dests = data?.destinations ?? [];
   const byId = Object.fromEntries(dests.map((d) => [d.id, d]));
@@ -132,7 +132,7 @@ export default function Pipelines() {
                           action: () => api(`pipelines/${p.id}`, { method: "DELETE" }),
                         }); }} />
       )}
-      {rejected && <Rejected p={rejected} manage={manage} onClose={() => { setRejected(null); reload(); }} />}
+      {rejected && <Rejected p={rejected} manage={can("quarantine.manage")} read={can("messages.view")} onClose={() => { setRejected(null); reload(); }} />}
       {confirm && (
         <Confirm title={confirm.title} subtitle={confirm.subtitle} confirm={confirm.confirm} danger={confirm.danger} action={confirm.action}
                  onDone={() => { toast(confirm.done); setConfirm(null); reload(); }} onClose={() => setConfirm(null)} />
@@ -248,7 +248,7 @@ function Dest({ id, byId, live, running }) {
 // ------------------------------------------------------------------ rejected batches
 
 /** Batches an end system refused as invalid (e.g. HTTP 400): why, and send them again (after fixing it) or discard them. */
-function Rejected({ p, manage, onClose }) {
+function Rejected({ p, manage, read, onClose }) {
   const toast = useToast();
   const { data, error, reload } = usePoll(`pipelines/${p.id}/rejected`, 0);
   const [picked, setPicked] = useState([]);
@@ -303,7 +303,7 @@ function Rejected({ p, manage, onClose }) {
                 <td>{r.destination ?? "–"}</td>
                 <td className="why">{r.reason ?? "–"}</td>
                 <td>{r.count ?? "–"}</td>
-                <td>{manage && <button className="btn ghost sm" onClick={() => open(r)}>View</button>}</td>
+                <td>{read && <button className="btn ghost sm" onClick={() => open(r)}>View</button>}</td>
               </tr>
             ))}
           </tbody>

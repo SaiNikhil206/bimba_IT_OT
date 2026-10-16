@@ -45,6 +45,37 @@ namespace Bimba.SiteAgent
             }
         }
 
+        /// <summary>installed with the setup exe (its Apps entry and the program file are there)</summary>
+        public static bool ExeInstalled
+        {
+            get
+            {
+                try
+                {
+                    using (var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                    using (var k = hklm.OpenSubKey(UninstallKey))
+                        return k != null && File.Exists(Paths.InstalledExe);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        public static bool ServiceExists(string name)
+        {
+            try
+            {
+                using (var sc = new ServiceController(name))
+                    return sc.Status >= 0;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
         public static bool IsElevated =>
             new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
@@ -89,6 +120,20 @@ namespace Bimba.SiteAgent
             cfg.Save();
         }
 
+        /// <summary>
+        /// The newer setup exe run over the installed one by the updater ("upgrade"): program files, edge collector,
+        /// services; the registration (configuration, certificate, data sources, buffer) stays as it is.
+        /// </summary>
+        public static void Upgrade(Action<string> progress)
+        {
+            if (MsiProductCode != null)
+                throw new InvalidOperationException("This machine was installed with the MSI: run the newer BIMBA-Site-Agent.msi instead.");
+            if (AgentConfig.TryLoad() == null)
+                throw new InvalidOperationException("This machine is not registered: run \"install\" with an enrollment token.");
+            Install(null, progress);
+        }
+
+        /// <param name="cfg">a new registration, or null to keep the stored one (upgrade)</param>
         public static void Install(AgentConfig cfg, Action<string> progress)
         {
             if (MsiProductCode != null)
@@ -98,6 +143,7 @@ namespace Bimba.SiteAgent
                 ExtractEdge(progress);
                 progress("Saving the configuration");
                 SaveConfig(cfg);
+                Updater.SaveTrust(cfg, true);
                 progress("Starting the service");
                 using (var sc = new ServiceController(Paths.ServiceName))
                 {
@@ -111,6 +157,7 @@ namespace Bimba.SiteAgent
                 progress("Stopping the running agent");
                 StopService();
             }
+            if (ServiceExists(Updater.ServiceName)) StopService(Updater.ServiceName);
 
             progress("Copying program files");
             Directory.CreateDirectory(Paths.InstallDir);
@@ -121,7 +168,15 @@ namespace Bimba.SiteAgent
 
             progress("Saving the configuration");
             SecureDataDir();
-            cfg.Save();
+            if (cfg != null)
+            {
+                cfg.Save();
+                Updater.SaveTrust(cfg, true);
+            }
+            else
+            {
+                Updater.SaveTrust(AgentConfig.TryLoad(), false);
+            }
 
             progress("Registering the Windows service");
             string bin = $"\"\\\"{Paths.InstalledExe}\\\" service\"";
@@ -129,6 +184,13 @@ namespace Bimba.SiteAgent
             Sc((ServiceStatus() == null ? "create " : "config ") + Paths.ServiceName + " " + common);
             Sc($"description {Paths.ServiceName} \"Registers this machine with its organization's BIMBA gateway, reports that it is online and sends the data of its SCADA sources.\"");
             Sc($"failure {Paths.ServiceName} reset= 86400 actions= restart/60000/restart/60000/restart/300000");
+
+            // automatic updates: a LocalSystem service the agent may start (and do nothing else with)
+            string ubin = $"\"\\\"{Paths.InstalledExe}\\\" update-service\"";
+            Sc((ServiceExists(Updater.ServiceName) ? "config " : "create ") + Updater.ServiceName +
+               $" binPath= {ubin} start= demand obj= LocalSystem DisplayName= \"{Updater.ServiceDisplayName}\"");
+            Sc($"description {Updater.ServiceName} \"Installs BIMBA Site Agent updates that Setu offers (started by the agent, stops when done).\"");
+            Sc($"sdset {Updater.ServiceName} {Updater.ServiceSddl}");
 
             RegisterUninstall();
 
@@ -229,6 +291,7 @@ namespace Bimba.SiteAgent
         /// <summary>Deletes the configuration and logs (ProgramData).</summary>
         public static void RemoveData()
         {
+            Updater.RemoveData();
             try
             {
                 if (Directory.Exists(Paths.DataDir)) Directory.Delete(Paths.DataDir, true);
@@ -268,6 +331,11 @@ namespace Bimba.SiteAgent
                 StopService();
                 Sc("delete " + Paths.ServiceName);
             }
+            if (ServiceExists(Updater.ServiceName))
+            {
+                StopService(Updater.ServiceName);
+                Sc("delete " + Updater.ServiceName);
+            }
             progress("Removing files");
             using (var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
                 hklm.DeleteSubKeyTree(UninstallKey, false);
@@ -288,9 +356,9 @@ namespace Bimba.SiteAgent
             }
         }
 
-        private static void StopService()
+        private static void StopService(string name = Paths.ServiceName)
         {
-            using (var sc = new ServiceController(Paths.ServiceName))
+            using (var sc = new ServiceController(name))
             {
                 if (sc.Status != ServiceControllerStatus.Stopped && sc.Status != ServiceControllerStatus.StopPending)
                     sc.Stop();
@@ -332,7 +400,7 @@ namespace Bimba.SiteAgent
             }
         }
 
-        private static void Sc(string args)
+        public static void Sc(string args)
         {
             var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), args)
             {

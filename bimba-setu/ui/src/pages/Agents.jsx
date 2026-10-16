@@ -4,6 +4,7 @@ import { api } from "../api.js";
 import { useSession } from "../session.jsx";
 import { Card, Empty, FilterSelect, full, Modal, Msg, PageHeader, SortTh, sortRows, Status, useOrgPath, usePoll, useRemembered, Verdict, when } from "../ui.jsx";
 import AgentPage from "./Agent.jsx";
+import { UpdatesBar, VersionCell } from "./AgentUpdates.jsx";
 
 // The organization's site agents (agents.view) and adding a computer (installer download + a one-time enrollment token,
 // agents.manage for the token). Named tokens for roll-outs: Administration → Enrollment tokens (Tokens.jsx). Removing an agent is on
@@ -20,6 +21,15 @@ const SORT = {
   name: (a) => a.name,
   sends: (a) => a.machines?.length ?? 0,
   status: (a) => (a.status === "online" ? 2 : ACTIVE.includes(a.status) ? 1 : 3) * 1e13 + (a.lastSeen ? Date.parse(a.lastSeen) : 0),
+  version: (a) => (a.agentVersion ?? "").split(/[.~-]/).map((p) => String(Number(p) || 0).padStart(6, "0")).join("."),
+};
+const UPDATING = ["offered", "downloading", "staged", "installing"];
+/** what the Version filter matches */
+const UPDATES = {
+  available: (u) => u?.available && !UPDATING.includes(u.state),
+  updating: (u) => UPDATING.includes(u?.state),
+  failed: (u) => u?.state === "failed" && u?.available,
+  current: (u) => u && !u.available,
 };
 
 export default function Agents() {
@@ -34,7 +44,7 @@ function AgentList() {
   const [q, setQ] = useState("");
   const [show, setShow] = useState("active");          // active | removed
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useRemembered("agents.filter", { status: "", os: "", site: "", data: "" });
+  const [f, setF] = useRemembered("agents.filter", { status: "", os: "", site: "", data: "", updates: "" });
   const [sort, setSort] = useRemembered("agents.sort", { key: "name", dir: 1 });
   const n = q.trim().toLowerCase();
   const all = data?.agents ?? [];
@@ -47,9 +57,10 @@ function AgentList() {
     && (!f.status || (f.status === "online") === (a.status === "online"))
     && (!f.os || platform(a) === f.os)
     && (!f.site || a.site === f.site)
-    && (!f.data || (f.data === "sending") === (a.machines?.length > 0)));
+    && (!f.data || (f.data === "sending") === (a.machines?.length > 0))
+    && (!f.updates || !!UPDATES[f.updates]?.(a.update)));
   const rows = sortRows(filtered, sort, SORT);
-  const filtering = n || f.status || f.os || f.site || f.data;
+  const filtering = n || f.status || f.os || f.site || f.data || f.updates;
   const offline = live.filter((a) => a.status !== "online");
   const sources = live.reduce((t, a) => t + (a.sources ?? 0), 0);
   const machines = live.reduce((t, a) => t + (a.machines?.length ?? 0), 0);
@@ -78,6 +89,7 @@ function AgentList() {
           {can("gateway.view") && <> Choose where the data goes in <Link to={at("/pipelines")}>Pipelines</Link>.</>}
         </Verdict>
       ))}
+      {live.length > 0 && <UpdatesBar />}
       {removed.length > 0 && (
         <div className="tabs" role="tablist">
           <button role="tab" aria-selected={show === "active"} className={show === "active" ? "on" : ""} onClick={() => setShow("active")}>Active ({live.length})</button>
@@ -93,22 +105,25 @@ function AgentList() {
                                             options={[["windows", "Windows"], ["linux", "Linux / Pi"]]} />}
           {sites.length > 1 && <FilterSelect label="Site" value={f.site} onChange={(v) => setF({ ...f, site: v })} options={sites.map((x) => [x, x])} />}
           <FilterSelect label="Data" value={f.data} onChange={(v) => setF({ ...f, data: v })} options={[["sending", "Sends machines"], ["none", "Nothing yet"]]} />
-          {filtering && <button className="btn ghost sm" onClick={() => { setQ(""); setF({ status: "", os: "", site: "", data: "" }); }}>Clear filters</button>}
+          {show === "active" && <FilterSelect label="Version" value={f.updates ?? ""} onChange={(v) => setF({ ...f, updates: v })}
+                                              options={[["available", "Update available"], ["updating", "Updating"], ["failed", "Update failed"], ["current", "Up to date"]]} />}
+          {filtering && <button className="btn ghost sm" onClick={() => { setQ(""); setF({ status: "", os: "", site: "", data: "", updates: "" }); }}>Clear filters</button>}
           {filtering && <span className="muted small count">{rows.length} of {shown.length}</span>}
         </div>
       )}
       <Msg>{error}</Msg>
       {(all.length > 0 || !data) && (
         <Card flush>
-          <table>
+          <table className="agents-tab">
             <thead><tr>
               <SortTh k="name" sort={sort} setSort={setSort}>Computer</SortTh>
               <SortTh k="sends" sort={sort} setSort={setSort}>Sends</SortTh>
+              <SortTh k="version" sort={sort} setSort={setSort} className="a-ver">Version</SortTh>
               <SortTh k="status" sort={sort} setSort={setSort}>Status</SortTh>
             </tr></thead>
             <tbody>
-              {!data && <Empty cols={3}>Loading…</Empty>}
-              {data && rows.length === 0 && <Empty cols={3}>{filtering ? "No site agent matches the filters." : show === "removed" ? "No removed agents." : "No active site agents."}</Empty>}
+              {!data && <Empty cols={4}>Loading…</Empty>}
+              {data && rows.length === 0 && <Empty cols={4}>{filtering ? "No site agent matches the filters." : show === "removed" ? "No removed agents." : "No active site agents."}</Empty>}
               {rows.map((a) => {
                 const ms = a.machines ?? [];
                 const active = ACTIVE.includes(a.status);
@@ -123,6 +138,7 @@ function AgentList() {
                         : <><span className="muted">Nothing yet</span>
                           {active && <small><Link to={at(`/agents/${a.id}`)}>{a.sources ? "Pick its devices" : "Add a data source"}</Link></small>}</>}
                     </td>
+                    <td className="a-ver" style={{ minWidth: 0 }}><VersionCell a={a} /></td>
                     <td>
                       <Status kind={a.status === "online" ? "good" : a.status === "offline" ? "bad" : ""}>{active ? a.status : "removed"}</Status>
                       <small title={full(a.lastSeen)}>{a.lastSeen ? when(a.lastSeen) : "never reported"}</small>
@@ -134,7 +150,7 @@ function AgentList() {
           </table>
         </Card>
       )}
-      {adding && <AddComputer onClose={() => setAdding(false)} canTokens={can("agents.manage")} />}
+      {adding && <AddComputer onClose={() => setAdding(false)} canTokens={can("agents.enroll")} />}
     </>
   );
 }

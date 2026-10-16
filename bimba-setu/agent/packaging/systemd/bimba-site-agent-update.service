@@ -1,0 +1,12 @@
+[Unit]
+Description=BIMBA Site Agent update (runs a newer installer over the installed agent; keeps the registration)
+After=network-online.target
+
+[Service]
+# root: installing a package needs it. The agent service itself has no privileges; this step checks the package
+# against Setu on its own before it installs it (bimba-site-agent apply-update).
+Type=oneshot
+EnvironmentFile=-/etc/default/bimba-site-agent
+ExecStart=/opt/bimba-site-agent/bin/bimba-site-agent apply-update
+TimeoutStartSec=30min
+Nice=5

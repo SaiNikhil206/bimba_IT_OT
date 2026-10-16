@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -35,7 +36,7 @@ import java.util.UUID;
  * Safety, in the order a command meets it:
  * <ol>
  *   <li>the data source allows commands (settings.writes) and the tag is marked writable, with lowest / highest
- *       value for numbers (AgentSources.writeSettings);</li>
+ *       value for numbers (AgentSources.writeSettings); changing any of that takes a second person (SafetyChanges);</li>
  *   <li>the person has writes.send; the value is inside the tag's limits;</li>
  *   <li>commands are not stopped for the organization, the agent's site or the agent (the kill switch: anyone who may
  *       send or approve can stop, only writes.manage resumes; stopping cancels the waiting commands);</li>
@@ -76,29 +77,6 @@ public class MachineCommands {
     @PostConstruct
     void init() {
         sources.onWriteDone(this::answered);
-        try {
-            seedRoles();
-        } catch (RuntimeException e) {
-            log.warn("built-in machine command roles not checked yet: {}", e.getMessage());
-        }
-    }
-
-    /** the built-in roles for machine commands, next to the Django-made ones (Administrator has every permission anyway) */
-    private void seedRoles() {
-        role("Machine operator", "Sends machine commands (writable tags, within their limits) and watches the site agents.",
-                "[\"gateway.view\", \"agents.view\", \"writes.send\"]");
-        role("Supervisor", "Sends and approves machine commands, stops and resumes them.",
-                "[\"gateway.view\", \"agents.view\", \"writes.send\", \"writes.approve\", \"writes.manage\"]");
-    }
-
-    private void role(String name, String description, String permissions) {
-        int n = db.sql("INSERT INTO {s}.bimba_gw_role (org_id, name, description, permissions, builtin, created_at)"
-                        + " SELECT NULL, ?, ?, ?::jsonb, true, now() WHERE NOT EXISTS"
-                        + " (SELECT 1 FROM {s}.bimba_gw_role WHERE org_id IS NULL AND lower(name) = lower(?))")
-                .params(name, description, permissions, name).update();
-        if (n > 0) {
-            log.info("built-in role {} added", name);
-        }
     }
 
     // ================================================================== machines
@@ -134,6 +112,9 @@ public class MachineCommands {
         for (JsonObject s : sources.sourcesOf(org)) {
             Agent a = agents.get(Json.str(s, "agentId"));
             for (String machine : AgentSources.machines(s)) {
+                if (!visible(p, Json.str(s, "agentId"), a, machine)) {
+                    continue;
+                }
                 List<JsonObject> tags = tagsOf(s, machine);
                 List<String> names = tags.stream().map(AgentSources::tagName).toList();
                 long writable = tags.stream().filter(MachineCommands::writable).count();
@@ -157,6 +138,7 @@ public class MachineCommands {
                 m.put("waiting", waiting.getOrDefault(machine.toLowerCase(Locale.ROOT), 0L));
                 m.put("lastCommand", lastCommand.get(machine.toLowerCase(Locale.ROOT)));
                 m.put("pipelines", carriers.stream().filter(c -> c.active() && c.carried(machine, names) > 0).count());
+                m.put("can", can(p, Json.str(s, "agentId"), a, machine));
                 out.add(m);
             }
         }
@@ -166,7 +148,9 @@ public class MachineCommands {
         });
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("machines", out);
-        m.put("waiting", waiting.values().stream().mapToLong(Long::longValue).sum());
+        Set<String> shown = new java.util.HashSet<>();
+        out.forEach(x -> shown.add(((String) x.get("machine")).toLowerCase(Locale.ROOT)));
+        m.put("waiting", waiting.entrySet().stream().filter(e -> shown.contains(e.getKey())).mapToLong(Map.Entry::getValue).sum());
         common(m, p, stops, agents);
         return m;
     }
@@ -181,6 +165,7 @@ public class MachineCommands {
         Map<String, Agent> agents = agents(org);
         Located l = locate(org, name);
         Agent a = agents.get(Json.str(l.source(), "agentId"));
+        see(p, l, a);
         List<Map<String, Object>> tags = new ArrayList<>();
         for (JsonObject t : tagsOf(l.source(), l.machine())) {
             tags.add(tag(l.source(), t, l.machine(), a));
@@ -230,6 +215,13 @@ public class MachineCommands {
         }
         m.put("commands", commands);
         common(m, p, stops, agents);
+        // on this machine's page: what the user may do here (their roles may hold only for some places)
+        Map<String, Object> here = new LinkedHashMap<>(can(p, Json.str(l.source(), "agentId"), a, l.machine()));
+        here.put("read", true);
+        Map<?, ?> whole = (Map<?, ?>) m.get("can");
+        here.put("stopOrg", whole.get("stopOrg"));
+        here.put("resumeOrg", whole.get("resumeOrg"));
+        m.put("can", here);
         return m;
     }
 
@@ -293,11 +285,13 @@ public class MachineCommands {
     /** what both pages need: the kill switch, where it can stop, what the user may do, the time limits */
     private static void common(Map<String, Object> m, Principal p, JsonObject stops, Map<String, Agent> agents) {
         m.put("stops", Json.toJava(stops.toString()));
-        m.put("sites", agents.values().stream().map(Agent::site).filter(x -> x != null && !x.isBlank()).distinct().sorted().toList());
-        m.put("agents", agents.values().stream().map(a -> Map.of("id", a.id(), "name", a.name())).toList());
+        // the places the kill switch offers: those where the user may stop (a scoped role only its own sites and agents)
+        m.put("sites", agents.values().stream().map(Agent::site).filter(x -> x != null && !x.isBlank() && stopSite(p, x, STOPPERS)).distinct().sorted().toList());
+        m.put("agents", agents.values().stream().filter(a -> stopAgent(p, a, STOPPERS)).map(a -> Map.of("id", a.id(), "name", a.name())).toList());
         boolean commands = p.can(Permission.WRITES_SEND) || p.can(Permission.WRITES_APPROVE) || p.can(Permission.WRITES_MANAGE);
         m.put("can", Map.of("send", p.can(Permission.WRITES_SEND), "approve", p.can(Permission.WRITES_APPROVE),
-                "resume", p.can(Permission.WRITES_MANAGE), "read", commands || p.can(Permission.AGENTS_VIEW)));
+                "resume", p.can(Permission.WRITES_MANAGE), "read", commands || p.can(Permission.MACHINES_VIEW),
+                "stopOrg", STOPPERS.stream().anyMatch(p::everywhere), "resumeOrg", p.everywhere(Permission.WRITES_MANAGE)));
         m.put("approvalMinutes", APPROVAL_MINUTES);
         m.put("ttlSeconds", AgentSources.WRITE_TTL_SECONDS);
     }
@@ -354,6 +348,7 @@ public class MachineCommands {
     public Map<String, Object> readNow(Principal p, String name) throws ApiException {
         long org = p.org();
         Located l = locate(org, name);
+        see(p, l, agents(org).get(Json.str(l.source(), "agentId")));
         JsonArray tags = new JsonArray();
         tagsOf(l.source(), l.machine()).forEach(tags::add);
         if (tags.isEmpty()) {
@@ -373,6 +368,7 @@ public class MachineCommands {
     public Map<String, Object> readState(Principal p, String name, String id) throws ApiException {
         long org = p.org();
         Located l = locate(org, name);
+        see(p, l, agents(org).get(Json.str(l.source(), "agentId")));
         Map<String, Object> st = sources.commandState(Json.str(l.source(), "agentId"), id, org);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("state", st.get("state"));
@@ -482,6 +478,7 @@ public class MachineCommands {
         long org = p.org();
         String reason = text(b, "reason", 300);
         Found f = find(org, AgentRegistry.str(b, "sourceId", 64), AgentRegistry.str(b, "machine", 120), AgentRegistry.str(b, "tag", 200));
+        here(p, Permission.WRITES_SEND, f);
         JsonPrimitive value = value(f, b.get("value"));
         check(f, org);
         String sourceId = Json.str(f.source(), "id");
@@ -551,6 +548,7 @@ public class MachineCommands {
         }
         JsonObject meta = r.meta();
         Found f = find(org, Json.str(meta, "sourceId"), Json.str(meta, "machine"), Json.str(meta, "tag"));
+        here(p, Permission.WRITES_APPROVE, f);
         JsonPrimitive value = value(f, meta.get("value"));
         check(f, org);
         meta.addProperty("approvedBy", p.username());
@@ -572,6 +570,9 @@ public class MachineCommands {
     public Map<String, Object> reject(Principal p, String id, JsonObject b, String ip) throws ApiException {
         long org = p.org();
         Row r = row(uuid(id), org);
+        if (!rowAllows(p, Permission.WRITES_APPROVE, r, agents(org))) {
+            throw security.outside(p, Permission.WRITES_APPROVE, Json.str(r.meta(), "machine") + "/" + Json.str(r.meta(), "tag"));
+        }
         String reason = text(b, "reason", 300);
         int n = db.sql("UPDATE {s}.bimba_agent_command SET state = 'rejected', error = ?, done_at = now() WHERE id = ? AND org_id = ? AND state = 'approval'")
                 .params("Rejected by " + p.name() + (reason == null || reason.isBlank() ? "." : ": " + reason), r.id(), org).update();
@@ -588,7 +589,7 @@ public class MachineCommands {
     public Map<String, Object> cancel(Principal p, String id, String ip) throws ApiException {
         long org = p.org();
         Row r = row(uuid(id), org);
-        if (!r.createdBy().equalsIgnoreCase(p.username()) && !p.can(Permission.WRITES_APPROVE)) {
+        if (!r.createdBy().equalsIgnoreCase(p.username()) && !rowAllows(p, Permission.WRITES_APPROVE, r, agents(org))) {
             throw new ApiException(403, "forbidden", "Only the person who asked for it, or an approver, can cancel this command.");
         }
         int n = db.sql("UPDATE {s}.bimba_agent_command SET state = 'cancelled', error = ?, done_at = now()"
@@ -611,6 +612,9 @@ public class MachineCommands {
             throw new ApiException(403, "forbidden", "Your roles do not include machine commands.");
         }
         Scope sc = scope(b, org);
+        if (!mayAct(p, sc, org, STOPPERS)) {
+            throw security.outside(p, Permission.WRITES_SEND, "kill switch " + sc.label());
+        }
         String reason = text(b, "reason", 300);
         JsonObject stop = new JsonObject();
         stop.addProperty("by", p.username());
@@ -647,6 +651,9 @@ public class MachineCommands {
     public Map<String, Object> resume(Principal p, JsonObject b, String ip) throws ApiException {
         long org = p.org();
         Scope sc = scope(b, org);
+        if (!mayAct(p, sc, org, List.of(Permission.WRITES_MANAGE))) {
+            throw security.outside(p, Permission.WRITES_MANAGE, "kill switch " + sc.label());
+        }
         JsonObject all = stops(org);
         boolean was = switch (sc.kind()) {
             case "org" -> all.remove("org") != null;
@@ -699,6 +706,72 @@ public class MachineCommands {
                 .params(KEY + org, all.toString()).update();
     }
 
+    // ================================================================== scopes
+
+    /** the permissions that may stop machine commands (only writes.manage resumes) */
+    private static final List<Permission> STOPPERS = List.of(Permission.WRITES_SEND, Permission.WRITES_APPROVE, Permission.WRITES_MANAGE);
+    /** the permissions that show a machine and its commands */
+    private static final List<Permission> SEERS = List.of(Permission.MACHINES_VIEW, Permission.WRITES_SEND, Permission.WRITES_APPROVE,
+            Permission.WRITES_MANAGE);
+
+    /** may the user see this machine (machines.view or any command permission, there) */
+    private static boolean visible(Principal p, String agentId, Agent a, String machine) {
+        String site = a == null ? null : a.site();
+        return SEERS.stream().anyMatch(x -> p.allows(x, agentId, site, machine));
+    }
+
+    private void see(Principal p, Located l, Agent a) throws ApiException {
+        if (!visible(p, Json.str(l.source(), "agentId"), a, l.machine())) {
+            throw security.outside(p, Permission.MACHINES_VIEW, "machine " + l.machine());
+        }
+    }
+
+    /** what the user may do on one machine */
+    private static Map<String, Object> can(Principal p, String agentId, Agent a, String machine) {
+        String site = a == null ? null : a.site();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("send", p.allows(Permission.WRITES_SEND, agentId, site, machine));
+        m.put("approve", p.allows(Permission.WRITES_APPROVE, agentId, site, machine));
+        m.put("resume", p.allows(Permission.WRITES_MANAGE, agentId, site, machine));
+        return m;
+    }
+
+    private void here(Principal p, Permission perm, Found f) throws ApiException {
+        if (!p.allows(perm, f.agent().id(), f.agent().site(), f.machine())) {
+            throw security.outside(p, perm, f.machine() + "/" + f.tag());
+        }
+    }
+
+    private static boolean rowAllows(Principal p, Permission perm, Row r, Map<String, Agent> agents) {
+        Agent a = r.agentId() == null ? null : agents.get(r.agentId());
+        return p.allows(perm, r.agentId(), a == null ? null : a.site(), Json.str(r.meta(), "machine"));
+    }
+
+    private static boolean rowVisible(Principal p, Row r, Map<String, Agent> agents) {
+        return SEERS.stream().anyMatch(x -> rowAllows(p, x, r, agents));
+    }
+
+    /** a site-wide stop needs the permission for the whole site (or everywhere), not just for some of its agents */
+    private static boolean stopSite(Principal p, String site, List<Permission> perms) {
+        return perms.stream().anyMatch(x -> p.can(x) && (p.scope(x) == null || com.bimba.setu.security.Scope.has(p.scope(x).sites(), site.trim())));
+    }
+
+    private static boolean stopAgent(Principal p, Agent a, List<Permission> perms) {
+        return perms.stream().anyMatch(x -> p.allows(x, a.id(), a.site(), null));
+    }
+
+    /** may the user stop (or resume) commands at this place */
+    private boolean mayAct(Principal p, Scope sc, long org, List<Permission> perms) {
+        return switch (sc.kind()) {
+            case "org" -> perms.stream().anyMatch(p::everywhere);
+            case "site" -> stopSite(p, sc.target(), perms);
+            default -> {
+                Agent a = agents(org).get(sc.target());
+                yield a != null && stopAgent(p, a, perms);
+            }
+        };
+    }
+
     // ================================================================== history
 
     /** the newest commands first, all or one state's (state=approval: those waiting): {commands:[..], waiting: n} */
@@ -707,18 +780,28 @@ public class MachineCommands {
         List<Map<String, Object>> out = new ArrayList<>();
         boolean one = state != null && !state.isBlank();
         int n = Math.max(1, Math.min(limit, 500));
+        Map<String, Agent> agents = agents(org);
+        boolean all = SEERS.stream().anyMatch(p::everywhere);
+        // a scoped user's commands are picked from more rows, so their newest still fill the page
         for (Row r : rows("WHERE org_id = ? AND kind = 'write'" + (one ? " AND state = ?" : "")
                         + " ORDER BY coalesce((request->'meta'->>'requestedAt')::timestamptz, created_at) DESC LIMIT ?",
-                one ? new Object[]{org, state, n} : new Object[]{org, n})) {
-            out.add(view(r, p));
+                one ? new Object[]{org, state, all ? n : 2000} : new Object[]{org, all ? n : 2000})) {
+            if (out.size() < n && rowVisible(p, r, agents)) {
+                out.add(view(r, p));
+            }
         }
-        long waiting = db.sql("SELECT count(*) FROM {s}.bimba_agent_command WHERE org_id = ? AND kind = 'write' AND state = 'approval'")
-                .param(org).query(Long.class).single();
+        long waiting = all ? db.sql("SELECT count(*) FROM {s}.bimba_agent_command WHERE org_id = ? AND kind = 'write' AND state = 'approval'")
+                .param(org).query(Long.class).single()
+                : rows("WHERE org_id = ? AND kind = 'write' AND state = 'approval'", org).stream().filter(r -> rowVisible(p, r, agents)).count();
         return Map.of("commands", out, "waiting", waiting);
     }
 
     public Map<String, Object> get(Principal p, String id) throws ApiException {
-        return view(row(uuid(id), p.org()), p);
+        Row r = row(uuid(id), p.org());
+        if (!rowVisible(p, r, agents(p.org()))) {
+            throw new ApiException(404, "not_found", "That command does not exist.");
+        }
+        return view(r, p);
     }
 
     private Map<String, Object> view(Row r, Principal p) {

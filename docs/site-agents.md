@@ -23,7 +23,7 @@ Windows service "BIMBASiteAgent"            POST /system/bimba-agent-certificate
 |---|---|
 | Who decides the organization | Setu, from the credentials. The agent never sends an organization id, so a machine can only land in the organization whose token or user installed it. |
 | Enrollment token | Created by an organization admin (BIMBA Operations, Django admin or `bimba_org token`). Optional use limit and expiry, revocable. Only its SHA-256 is stored; the token is shown once. |
-| Organization user + password | Same Django account as in BIMBA Operations (PBKDF2 hash checked by Setu). A user in several organizations is asked to pick one, from their own organizations only. |
+| Organization user + password | Same Django account as in BIMBA Operations (PBKDF2 hash checked by Setu), and their roles there must allow `agents.enroll` (Install new site agents). A user in several organizations is asked to pick one, from those organizations only. |
 | After enrollment | Setu issues a random per-machine **agent secret** (only its SHA-256 is stored). The token or password is used once and never written to disk. |
 | Machine certificate (mutual TLS) | On its first start the service creates an RSA 2048 key in **its own** Windows key store (LocalService, not exportable), sends a certificate request with its secret, and gets a client certificate from Setu's private **agent CA** (`/data/tls/agent-ca.p12`; CN = agent id, O = organization, client-auth only, 90 days). From then on it signs in with the certificate; Setu refuses the secret and the agent deletes it. Renewed automatically when a third of the lifetime is left. The previous credential stays valid until the new certificate has been used once, so a lost answer cannot lock a machine out. HTTPS only. |
 | Secret on the machine | Until the certificate is in use: `%ProgramData%\BIMBA Site Agent\agent.json`, DPAPI-encrypted, folder ACL: SYSTEM + Administrators + the service account only. Afterwards only the certificate thumbprint is kept there. |
@@ -64,7 +64,7 @@ in BIMBA Operations → **Site agents → Install on a machine**.
 
 In the Setu console: **Site agents → Add a computer** (permission `agents.view`). It walks through four steps: the
 computer (Windows or Linux / Raspberry Pi, kind of package), the Setu address it uses, how it registers, then the
-download and install command. **Copy token** (permission `agents.manage`) makes a *one-time* token: it registers one
+download and install command. **Copy token** (permission `agents.enroll`) makes a *one-time* token: it registers one
 computer and expires after 3 minutes (`POST /api/gw/agents/tokens/one-time`, `EnrollTokens.ONE_TIME_MINUTES`). It is
 put on the clipboard and into the commands, a countdown shows how long it still works, and the dialog says when a
 computer has registered with it (then **Copy a token for another computer**) or that it expired (**Copy a new token**).
@@ -72,7 +72,7 @@ Copy it when the installer asks for it: on Linux, install the package first, the
 command. Signature, certificate and checksum are under *More ways to install, and technical details*.
 
 Named tokens for roll-outs to many computers (MSI, apt with `BIMBA_ENROLL_TOKEN`, a prepared image) are under
-**Administration → Enrollment tokens** (permission `agents.manage`): New token (name, valid days, maximum computers;
+**Administration → Enrollment tokens** (permission `agents.enroll`): New token (name, valid days, maximum computers;
 shown once), revoke, and Active / All (one-time, expired and used-up tokens are under All).
 
 The Site agents page leads with one verdict (all computers online, or which ones are not reporting); removed agents
@@ -189,6 +189,17 @@ What has to be true before a value reaches a machine, in order:
    `writes.send`, `writes.approve` or `writes.manage` can stop; only `writes.manage` resumes; stopping cancels what waits).
 5. A tag marked **A second person approves each command** waits up to 15 minutes for someone else with `writes.approve`
    (never the requester); Setu checks everything again when it is approved.
+
+Steps 1 and 2 are **safety configuration** and fall under four-eyes (BRD 4.5): saving a data source that turns *Allow
+machine commands* on or off, makes a tag writable or not, or changes its limits, *second person* setting or command topic
+(and, while the tag is writable, its address, data type, scaling or unit) saves everything else at once and turns the
+safety part into a **change request**. Until another person with `writes.approve` (for the agent and every changed
+machine) approves it, the old settings keep applying; the proposer cannot approve it, can withdraw it, and an approver can
+reject it with a reason. Requests wait on the agent's **Data sources** tab (with a note on the data source) and on the
+**Machines** page next to the command approvals; they expire after 7 days. Approving checks the data source again: if the
+tag was removed or its settings changed meanwhile, the request is *Out of date* and has to be proposed again. A new tag is
+saved read only until approved; removing a tag or a data source needs no approval. In an emergency use the kill switch
+(step 4), which takes effect at once. Audit: `agent.source.safety.*`.
 6. The agent picks the command up within **15 seconds** or it is never carried out (a late setpoint is worse than none).
 7. The computer itself allows commands: `sudo bimba-site-agent writes off` (Linux) or `BIMBA-Site-Agent-Setup.exe writes off`
    (Windows, elevated) refuses every command whatever Setu says, read before each command, no restart needed; `writes on`
@@ -207,7 +218,7 @@ sim's HR7+ and C3+ are free to write).
 
 ### Scan the network
 
-**Site agents → agent → Data sources → Scan the network** (permission `agents.manage`, agent 1.8 or later; every scan is
+**Site agents → agent → Data sources → Scan the network** (permission `sources.manage`, agent 1.8 or later; every scan is
 in the audit log as `agent.netscan`). The agent looks for data sources it can reach:
 
 1. It tries one TCP connection to the standard ports of the chosen types (from `source-kinds.json`: OPC UA 4840, 4841,
@@ -268,6 +279,51 @@ systemd on the same Docker network as Setu and the simulators, with `site-agent/
 `docker compose exec test-linux bash`, `apt-get update && apt-get install -y /dist/bimba-site-agent_all.deb` and
 `bimba-site-agent install --server https://setu:8443 --token <token> --trust-cert <sha256>`.
 
+## Automatic updates
+
+From agent 1.10 on, a computer updates itself: when Setu has a newer installer than the agent runs, the newer installer
+is run over the old one, the way the agent was installed (setup exe, MSI, `.deb` or `.tar.gz`). The registration, client
+certificate, data sources and buffered readings stay; data collection pauses for about a minute. Agents before 1.10 are
+updated by hand once (run the 1.10 installer over them); the console shows them as *update by hand*.
+
+How it works (`agents/AgentUpdates` in Setu, `Updater` in both agents):
+
+1. The newest installers are the files in `site-agent/dist` (`release.json`, `release-linux.json`), the same ones
+   **Add a computer** offers. Copy a newer build there; nothing else is needed.
+2. The agent reports with every heartbeat how it was installed, whether it can update itself and whether the computer
+   allows it (`updates`). Setu answers with `update` (version, kind, SHA-256, size) when the organization's settings say
+   so.
+3. The agent service (no installer rights: `bimba-agent` on Linux, LocalService on Windows) downloads it over its own
+   connection (`GET /system/bimba-agent-update/download`, client certificate), checks size and SHA-256 and hands it to
+   its **updater**: on Linux the root unit `bimba-site-agent-update.service`, started by `bimba-site-agent-update.path`
+   when `/var/lib/bimba-site-agent/update/ready.json` appears; on Windows the LocalSystem service `BIMBASiteAgentUpdate`
+   (demand start; the installer allows LocalService to start it and nothing else).
+4. The updater trusts nothing the agent service wrote. It copies the installer into its own folder (root / SYSTEM only,
+   no links followed), compares its SHA-256 and version with `GET /system/bimba-agent-update/release`, fetched with the
+   Setu address and certificate pin an administrator's install stored for it (Linux
+   `/var/lib/bimba-site-agent-update/updater.json`, Windows `HKLM\SOFTWARE\BIMBA\Site Agent` `UpdateServer`,
+   `UpdateTrustCert`), refuses older versions and, when the installed Windows agent is code-signed, installers from
+   another publisher. Then it installs: `dpkg -i`, `install.sh`, `BIMBA-Site-Agent-Setup.exe upgrade`, or
+   `msiexec /i … /qn` (on Windows from a copy of itself outside Program Files, the *runner*).
+5. The result goes to `last.json` / `HKLM\…\LastUpdate`; the agent reports it, and Setu marks the update done when the
+   agent reports the new version (or failed with the updater's reason, or after 20 minutes without the new version).
+
+Console: **Site agents** shows each computer's version (filter *Version*: update available, updating, update failed,
+up to date) and a line with the organization's **Update settings** (permission `agents.manage` for the whole
+organization): *Automatic* (optionally only in a daily window, in a time zone; how many computers update at once,
+default 5), *Ask me* or *Off*. A failed automatic update is tried again after an hour, three times per version. On a
+computer's **Computer** tab, *Software updates* shows the installed and latest version, the update under way and the
+history; **Update now** (any mode) and **Hold updates** need `agents.manage` for that agent. Starting, finishing and
+failing updates and every console action are in the audit log (`agent.update.*`).
+
+On the computer, an administrator can refuse updates whatever Setu says:
+`sudo bimba-site-agent updates off` (Linux) or `BIMBA-Site-Agent-Setup.exe updates off` (Windows, elevated);
+`updates on` allows them again and `updates` shows the setting and the last result. `status` shows it too.
+
+Security note: with an **unsigned** Windows build, the updater can only compare the installer with what Setu publishes.
+Sign the installers (see *Build and sign*); a signed agent then accepts only installers signed with the same
+certificate.
+
 ## Setu configuration
 
 Works without changes: Setu reads the database from its `BIMBA_DB_*` environment
@@ -299,7 +355,10 @@ with the `agents.view` permission; `agents.manage` can remove them (Computer tab
 * DNP3: TCP only (no serial lines), no Secure Authentication; IEC 104: no TLS (IEC 62351-3) yet; SQL: no Oracle yet,
   no Windows (integrated) sign-in for SQL Server.
 * Sign-in to BIMBA Operations is per organization for **Site agents only**; the other /operations pages are still open (POC).
-* No automatic agent updates: re-run a newer installer over the old one (it keeps the registration).
+* Automatic updates: verified live on Linux (Debian `.deb`, Rocky `.tar.gz`: automatic, window, Ask me, Update now,
+  hold, the computer's own off switch, a forged package and a link refused, a failed check reported). The Windows
+  updater service and `upgrade` / MSI paths are built and compile but have not run on a Windows machine yet. No staged
+  rollout groups (canary computers first) and no rollback to the previous version yet.
 * Machine commands: one value per command; no S7, EtherNet/IP, DNP3 (select-before-operate) or IEC 104 commands yet; no
-  Modbus 32-bit / float registers; upstream systems cannot send commands yet (console only). The Windows agent needs a new
-  installer build (1.9) for commands; it has not been tested on Windows yet.
+  Modbus 32-bit / float registers; upstream systems cannot send commands yet (console only). The Windows installer (1.10)
+  carries commands; they have not been tested on Windows yet.

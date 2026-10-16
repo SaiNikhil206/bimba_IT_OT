@@ -27,8 +27,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/gw/machines")
 public class MachinesController {
-    private static final String VIEW = "hasAnyAuthority('gateway.view', 'agents.view', 'writes.send', 'writes.approve', 'writes.manage')";
-    private static final String READ = "hasAnyAuthority('agents.view', 'writes.send', 'writes.approve', 'writes.manage')";
+    private static final String VIEW = "hasAnyAuthority('machines.view', 'writes.send', 'writes.approve', 'writes.manage')";
+    private static final String READ = VIEW;
 
     private final MachineCommands machines;
 

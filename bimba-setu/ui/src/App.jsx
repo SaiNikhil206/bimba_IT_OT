@@ -30,14 +30,14 @@ import Organizations from "./pages/Organizations.jsx";
 const PAGES = [
   { path: "/overview", label: "Overview", icon: "◎", perm: ["gateway.view"], element: <Overview /> },
   { path: "/agents", records: true, label: "Site agents", icon: "⌂", perm: ["agents.view"], element: <Agents /> },
-  { path: "/machines", records: true, label: "Machines", icon: "▣", perm: ["gateway.view", "agents.view", "writes.send", "writes.approve", "writes.manage"], element: <Machines /> },
+  { path: "/machines", records: true, label: "Machines", icon: "▣", perm: ["machines.view", "writes.send", "writes.approve", "writes.manage"], element: <Machines /> },
   { path: "/registry", label: "Tag registry", icon: "▤", perm: ["gateway.view"], element: <Registry /> },
   { path: "/pipelines", records: true, label: "Pipelines", icon: "⇉", perm: ["gateway.view"], group: "Delivery", element: <Pipelines /> },
   { path: "/destinations", records: true, label: "Destinations", icon: "◇", perm: ["gateway.view"], group: "Delivery", element: <Destinations /> },
   { path: "/quarantine", label: "Quarantine", icon: "⊘", perm: ["gateway.view"], group: "Delivery", element: <Quarantine /> },
-  { path: "/users", records: true, label: "Users", icon: "◉", perm: ["users.manage"], group: "Administration", element: <Users /> },
-  { path: "/roles", records: true, label: "Roles", icon: "◆", perm: ["roles.manage", "users.manage"], group: "Administration", element: <Roles /> },
-  { path: "/tokens", label: "Enrollment tokens", icon: "⚿", perm: ["agents.manage"], group: "Administration", element: <Tokens /> },
+  { path: "/users", records: true, label: "Users", icon: "◉", perm: ["users.view", "users.manage"], group: "Administration", element: <Users /> },
+  { path: "/roles", records: true, label: "Roles", icon: "◆", perm: ["roles.manage", "users.view", "users.manage"], group: "Administration", element: <Roles /> },
+  { path: "/tokens", label: "Enrollment tokens", icon: "⚿", perm: ["agents.enroll"], group: "Administration", element: <Tokens /> },
   { path: "/audit", label: "Audit log", icon: "≡", perm: ["audit.view"], group: "Administration", element: <Audit /> },
   { path: "/organizations", records: true, label: "Organizations", icon: "▦", platform: true, group: "Platform", element: <Organizations /> },
 ];

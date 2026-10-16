@@ -21,6 +21,16 @@ if [ "$1" = "configure" ]; then
         "$AGENT" enroll || echo "BIMBA Site Agent: registration failed (see above). Run: sudo bimba-site-agent install --server <gateway> --token <token>"
     fi
 
+    # automatic updates: the updater gets Setu's address from the registration (kept on upgrades) and watches for
+    # installers the agent downloads
+    if [ -f "$CONF" ]; then
+        "$AGENT" updater-setup >/dev/null 2>&1 || true
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl enable bimba-site-agent-update.path >/dev/null 2>&1 || true
+        systemctl start bimba-site-agent-update.path >/dev/null 2>&1 || true
+    fi
+
     if [ -f "$CONF" ] && [ ! -f /var/lib/bimba-site-agent/uninstall-notified ]; then
         if [ -d /run/systemd/system ]; then
             systemctl enable bimba-site-agent >/dev/null 2>&1 || true

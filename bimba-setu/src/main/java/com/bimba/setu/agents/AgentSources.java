@@ -386,7 +386,29 @@ public class AgentSources {
         return m;
     }
 
+    /** told when a save changes safety configuration (SafetyChanges stores the change request): returns the request */
+    public interface SafetyProposer {
+        Map<String, Object> propose(long orgId, UUID agent, JsonObject source, List<JsonObject> changes, String actor, String actorName);
+    }
+
+    private volatile SafetyProposer proposer;
+
+    void onSafetyChange(SafetyProposer p) {
+        proposer = p;
+    }
+
     public Map<String, Object> saveSource(String agentId, String sourceId, JsonObject b, long orgId, String actor) throws ApiException {
+        return saveSource(agentId, sourceId, b, orgId, actor, actor);
+    }
+
+    /**
+     * Adds or changes a data source. A change to its safety configuration (the writes switch, a tag's writable flag,
+     * limits, approval or, while writable, where and how it writes: {@link SafetyConfig}) is not saved: it becomes a
+     * change request that another person approves (four-eyes, BRD 4.5); the rest is saved at once. The answer then
+     * carries changeRequest.
+     */
+    public Map<String, Object> saveSource(String agentId, String sourceId, JsonObject b, long orgId, String actor, String actorName)
+            throws ApiException {
         UUID agent = agentOf(agentId, orgId);
         String name = text(b, "name", 120);
         if (name == null || !NAME.matcher(name).matches()) {
@@ -419,6 +441,13 @@ public class AgentSources {
             }
         } else if (pw != null && !pw.isEmpty()) {
             settings.addProperty("password", secrets.seal(pw));
+        }
+        // four-eyes: what decides machine commands stays as stored until another person approves the change
+        JsonObject storedSettings = existing == null ? null : existing.getAsJsonObject("settings");
+        JsonArray storedTags = existing == null ? new JsonArray() : existing.getAsJsonArray("tags");
+        List<JsonObject> safety = SafetyConfig.diff(storedSettings, storedTags, settings, tags, name);
+        if (!safety.isEmpty()) {
+            SafetyConfig.hold(storedSettings, storedTags, settings, tags, safety);
         }
         JsonObject draft = new JsonObject();
         draft.addProperty("name", name);
@@ -469,7 +498,35 @@ public class AgentSources {
         }
         refresh();
         reloadAgent(agent, orgId, actor);
-        return sourceJson(rows("WHERE s.id = ?", sid).get(0));
+        JsonObject saved = rows("WHERE s.id = ?", sid).get(0);
+        Map<String, Object> out = sourceJson(saved);
+        if (!safety.isEmpty()) {
+            SafetyProposer p = proposer;
+            if (p == null) {
+                log.warn("data source {}: machine command settings not changed (change requests are not available)", name);
+            } else {
+                out.put("changeRequest", p.propose(orgId, agent, saved, safety, actor, actorName));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Puts approved safety changes into the source as it is (optimistic: 0 when the source changed since it was read,
+     * or is gone). The agent fetches its sources again.
+     */
+    int applySafety(JsonObject current, JsonObject settings, JsonArray tags, String actor) {
+        UUID sid = UUID.fromString(Json.str(current, "id"));
+        UUID agent = UUID.fromString(Json.str(current, "agentId"));
+        int n = db.sql("UPDATE {s}.bimba_agent_source SET settings = ?::jsonb, tags = ?::jsonb, updated_at = now()"
+                        + " WHERE id = ? AND settings = ?::jsonb AND tags = ?::jsonb")
+                .params(settings.toString(), tags.toString(), sid, current.get("settings").toString(), current.get("tags").toString())
+                .update();
+        if (n > 0) {
+            refresh();
+            reloadAgent(agent, current.get("orgId").getAsLong(), actor);
+        }
+        return n;
     }
 
     public String deleteSource(String agentId, String sourceId, long orgId) throws ApiException {
@@ -1361,6 +1418,17 @@ public class AgentSources {
     /** every data source of the organization */
     List<JsonObject> sourcesOf(long orgId) {
         return rows("WHERE s.org_id = ? ORDER BY s.name", orgId);
+    }
+
+    /** the organization's machines (by name) and the site agent that collects each: machine name -> agent id */
+    public Map<String, String> machineAgents(long orgId) {
+        Map<String, String> out = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (JsonObject s : sourcesOf(orgId)) {
+            for (String m : machines(s)) {
+                out.putIfAbsent(m, Json.str(s, "agentId"));
+            }
+        }
+        return out;
     }
 
     /** the last reading of machine / tag the agent sent since Setu started, or null */

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { Card, Empty, full, Modal, Msg, PageHeader, Status, useOrgPath, usePoll, useRecordAddress, useToast, when } from "../ui.jsx";
+import { SafetyRequests } from "./SafetyChanges.jsx";
 
 // Machines: every machine the organization's site agents collect (those with writable tags first). A machine's page
 // (/<org>/machines/<machine>) shows where it comes from (its site agent and data source, with links), which pipelines
@@ -85,9 +86,12 @@ function MachineList({ data, error, reload, open, at }) {
   const [stopping, setStopping] = useState(false);
   const can = data?.can ?? {};
   const waiting = usePoll(can.approve ? "machine-commands?state=approval&limit=50" : null, 10_000);
+  // changes to writable tags, limits and Allow machine commands that wait for a second person (four-eyes)
+  const changes = usePoll(data ? "safety-changes?state=pending" : null, 15_000);
   const reloadAll = () => {
     reload();
     waiting.reload();
+    changes.reload();
   };
   const acts = useActions(reloadAll);
   const list = data?.machines ?? [];
@@ -112,6 +116,7 @@ function MachineList({ data, error, reload, open, at }) {
               <Commandtable commands={pending} acts={acts} can={can} machineLink={(c) => at(`/machines/${c.machine}`)} />
             </Card>
           )}
+          <SafetyRequests data={changes.data} reload={reloadAll} sourceLink={(r) => at(`/agents/${r.agentId}`)} />
           <Card title={`Machines (${list.length})`}
                 subtitle={list.length ? undefined : "No machines yet: add a data source to a site agent first."}
                 action={list.length > 6 && (
@@ -386,7 +391,7 @@ function StopState({ data, onStop, onChanged, compact }) {
               <li key={`${s.scope}/${s.target}`}>
                 <span className="min0"><b>{s.label}</b>: stopped by {s.byName} <span title={full(s.at)}>{when(s.at)}</span>
                   {s.reason ? ` · ${s.reason}` : ""}</span>
-                {data.can?.resume && <button className="btn ghost sm" onClick={() => resume(s)}>Resume</button>}
+                {data.can?.resume && (s.scope !== "org" || (data.can?.resumeOrg ?? true)) && <button className="btn ghost sm" onClick={() => resume(s)}>Resume</button>}
               </li>
             ))}
           </ul>
@@ -561,8 +566,10 @@ function SetValue({ target: t, data, onClose }) {
 }
 
 function StopDialog({ data, onClose, onDone }) {
-  const [scope, setScope] = useState("org");
-  const [target, setTarget] = useState("");
+  // a role limited to some places stops only there (the server offers only its sites and agents)
+  const orgOk = data.can?.stopOrg ?? true;
+  const [scope, setScope] = useState(orgOk ? "org" : data.sites?.length ? "site" : "agent");
+  const [target, setTarget] = useState(orgOk ? "" : data.sites?.[0] ?? data.agents?.[0]?.id ?? "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -587,7 +594,8 @@ function StopDialog({ data, onClose, onDone }) {
       <div className="field">
         <span className="label">Where</span>
         <div className="seg" role="radiogroup" aria-label="Where">
-          <label><input type="radio" name="s-scope" checked={scope === "org"} onChange={() => { setScope("org"); setTarget(""); }} /><b>Whole organization</b></label>
+          <label><input type="radio" name="s-scope" checked={scope === "org"} disabled={!orgOk} onChange={() => { setScope("org"); setTarget(""); }} /><b>Whole organization</b>
+            {!orgOk && <small>Your roles hold only for some places.</small>}</label>
           <label><input type="radio" name="s-scope" checked={scope === "site"} disabled={!sites.length} onChange={() => { setScope("site"); setTarget(sites[0] ?? ""); }} />
             <b>One site</b>{!sites.length && <small>No site agent has a site set.</small>}</label>
           <label><input type="radio" name="s-scope" checked={scope === "agent"} disabled={!agents.length} onChange={() => { setScope("agent"); setTarget(agents[0]?.id ?? ""); }} />

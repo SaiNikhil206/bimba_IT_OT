@@ -25,6 +25,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentTest {
     @Test
+    void updateVersionsCompareLikeSetu() {
+        assertTrue(Updater.compare("1.10.0", "1.9.0") > 0);
+        assertTrue(Updater.compare("1.10.0~rc1", "1.10.0") < 0);
+        assertTrue(Updater.compare("1.10.0", "1.10.0~rc1") > 0);
+        assertEquals(0, Updater.compare("1.10", "1.10.0"));
+        assertTrue(Updater.compare("dev", "1.0.0") < 0);
+    }
+
+    @Test
     void scadaNamesMatchAtWordStartOnly() {
         assertEquals("Inductive Automation Ignition", Inventory.familyOf("ignition"));
         assertEquals("CODESYS Control", Inventory.familyOf("codesyscontrol"));

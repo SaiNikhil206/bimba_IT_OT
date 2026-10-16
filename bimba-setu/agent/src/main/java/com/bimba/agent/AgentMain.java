@@ -28,6 +28,7 @@ public final class AgentMain {
               bimba-site-agent test --server <setu> (--token <t> | --email <e-mail> ...)   check, install nothing
               bimba-site-agent status | inventory | version
               bimba-site-agent writes [on | off]           machine commands from Setu on this computer (off = always refused)
+              bimba-site-agent updates [on | off]          automatic updates from Setu on this computer (off = always refused)
               bimba-site-agent uninstall [--keep-data]     tell Setu, stop the service, remove the registration
               bimba-site-agent run                         run in the foreground (systemd starts it this way; containers too)
 
@@ -54,7 +55,8 @@ public final class AgentMain {
     static int exec(String[] args) {
         String cmd = args.length > 0 ? args[0].replaceFirst("^-+", "").toLowerCase(Locale.ROOT) : "help";
         try {
-            Map<String, String> opt = "writes".equals(cmd) ? Map.of() : options(args);     // writes on | off: a word, no options
+            // writes / updates on | off: a word, no options
+            Map<String, String> opt = "writes".equals(cmd) || "updates".equals(cmd) ? Map.of() : options(args);
             switch (cmd) {
                 case "install":
                     return install(opt, Mode.INSTALL);
@@ -69,6 +71,16 @@ public final class AgentMain {
                     return status();
                 case "writes":
                     return writes(args.length > 1 ? args[1].toLowerCase(Locale.ROOT) : null);
+                case "updates":
+                    return Updater.updates(args.length > 1 ? args[1].toLowerCase(Locale.ROOT) : null);
+                case "apply-update":                  // the root updater (bimba-site-agent-update.service)
+                    return Updater.apply();
+                case "updater-setup":                 // package scripts: the updater's settings from the registration
+                    if (!isRoot()) {
+                        return notRoot();
+                    }
+                    Updater.setup(false);
+                    return 0;
                 case "inventory":
                     System.out.println(new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().serializeNulls().create()
                             .toJson(Inventory.collect(opt.get("server"), null)));
@@ -183,6 +195,7 @@ public final class AgentMain {
         Files2.privateDir(Paths.dataDir());
         Files.deleteIfExists(Paths.uninstallMarker());     // registered again after an uninstall
         boolean owned = Files2.chownTree(Paths.configDir(), Paths.USER) & Files2.chownTree(Paths.dataDir(), Paths.USER);
+        Updater.setup(true);                                // the updater checks installers with this Setu (root only)
         System.out.println("Configuration saved in " + Paths.configFile() + (owned ? " (owner " + Paths.USER + ")" : ""));
         if (mode == Mode.ENROLL || mode == Mode.AUTO) {
             return 0;
@@ -288,6 +301,11 @@ public final class AgentMain {
                 : "agent secret (the service asks for a certificate over HTTPS)"));
         System.out.println("enrolled:     " + cfg.enrolledAt);
         System.out.println("commands:     " + (cfg.writesAllowed() ? "allowed (as Setu permits)" : "refused on this computer (bimba-site-agent writes on)"));
+        com.google.gson.JsonObject us = Updater.settings();
+        String why = Updater.whyNot(Updater.kind(), us);
+        boolean updatesOn = us == null || !us.has("allowUpdates") || us.get("allowUpdates").getAsBoolean();
+        System.out.println("updates:      " + (why != null ? "manual (" + why + ")" : updatesOn ? "automatic (as Setu decides)"
+                : "refused on this computer (bimba-site-agent updates on)"));
         System.out.println("log:          journalctl -u " + Paths.SERVICE);
         return 0;
     }

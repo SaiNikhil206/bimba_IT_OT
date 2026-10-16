@@ -185,6 +185,7 @@ public class OrgService {
             db.sql("DELETE FROM {s}.bimba_gw_user_role WHERE org_id = ? OR role_id IN (SELECT r.id FROM {s}.bimba_gw_role r WHERE r.org_id = ?)")
                     .params(id, id).update();
             db.sql("DELETE FROM {s}.bimba_gw_role WHERE org_id = ?").param(id).update();
+            db.sql("DELETE FROM {s}.bimba_gw_setting WHERE key = ?").param("access.org." + id).update();
             db.sql("DELETE FROM {s}.bimba_org_member WHERE org_id = ?").param(id).update();
             db.sql("DELETE FROM {s}.bimba_agent_event WHERE org_id = ? OR agent_id IN (SELECT a.id FROM {s}.bimba_agent a WHERE a.org_id = ?)")
                     .params(id, id).update();

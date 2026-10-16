@@ -4,6 +4,7 @@ set -e
 if [ "$1" = "remove" ]; then
     if [ -d /run/systemd/system ]; then
         systemctl disable --now bimba-site-agent >/dev/null 2>&1 || true
+        systemctl disable --now bimba-site-agent-update.path >/dev/null 2>&1 || true
     fi
     /opt/bimba-site-agent/bin/bimba-site-agent uninstall-notify || true
 fi

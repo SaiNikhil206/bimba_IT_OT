@@ -4,7 +4,9 @@ import com.bimba.setu.Db;
 import com.bimba.setu.SetuService;
 import com.bimba.setu.Json;
 import com.bimba.setu.config.BimbaConfig;
+import com.bimba.setu.security.Grants;
 import com.bimba.setu.security.Passwords;
+import com.bimba.setu.security.Permission;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -40,11 +42,13 @@ public class AgentRegistry {
 
     private final SetuService setu;
     private final Db db;
+    private final Grants grants;
     public final FailureLimiter failures = new FailureLimiter();
 
-    public AgentRegistry(SetuService setu, Db db) {
+    public AgentRegistry(SetuService setu, Db db, Grants grants) {
         this.setu = setu;
         this.db = db;
+        this.grants = grants;
     }
 
     /** HTTP status + message for the agent / console API. */
@@ -176,11 +180,19 @@ public class AgentRegistry {
         if (row == null || !match || !(Boolean) row[2]) {
             throw new ApiError(401, "Wrong e-mail address or password.");
         }
-        List<Credential> orgs = db.sql("SELECT o.id, o.slug, o.name FROM {s}.bimba_org_member m JOIN {s}.bimba_org o ON o.id = m.org_id"
+        List<Credential> member = db.sql("SELECT o.id, o.slug, o.name FROM {s}.bimba_org_member m JOIN {s}.bimba_org o ON o.id = m.org_id"
                         + " WHERE m.user_id = ? ORDER BY o.name").param(row[0])
                 .query((rs, n) -> new Credential(rs.getLong(1), rs.getString(2), rs.getString(3), "password", user)).list();
-        if (orgs.isEmpty()) {
+        if (member.isEmpty()) {
             throw new ApiError(403, "This user is not a member of any organization.");
+        }
+        // only where their roles allow installing site agents (agents.enroll); platform admins everywhere they are members
+        boolean superuser = db.sql("SELECT is_superuser FROM {s}.auth_user WHERE id = ?").param(row[0]).query(Boolean.class).single();
+        List<Credential> orgs = member.stream()
+                .filter(o -> grants.access((Long) row[0], superuser, o.orgId()).can(Permission.AGENTS_ENROLL.key)).toList();
+        if (orgs.isEmpty()) {
+            throw new ApiError(403, "Your roles do not allow installing site agents. Use an enrollment token, or ask an administrator for"
+                    + " the permission \"" + Permission.AGENTS_ENROLL.label + "\".");
         }
         if (wantedOrg != null && !wantedOrg.isBlank()) {
             return orgs.stream().filter(o -> o.orgSlug().equals(wantedOrg.trim())).findFirst()
@@ -272,6 +284,11 @@ public class AgentRegistry {
         return new Agent(id, (Long) row[0], (String) row[7], (Integer) row[3], current, (Timestamp) row[6], viaCert);
     }
 
+    /** only checks the caller (an active agent of some organization): download of an update */
+    public void check(Caller caller) throws ApiError {
+        authenticate(caller);
+    }
+
     public Map<String, Object> heartbeat(Caller caller, JsonObject body, String remoteIp) throws ApiError {
         Agent a = authenticate(caller);
         UUID id = a.id();
@@ -289,7 +306,9 @@ public class AgentRegistry {
         }
         JsonObject machine = obj(body, "machine");
         if (machine == null) {
-            db.sql("UPDATE {s}.bimba_agent SET last_seen = now(), remote_ip = ? WHERE id = ?").params(nz(remoteIp), id).update();
+            // the version comes with every heartbeat: an update shows at once, not with the next full details
+            db.sql("UPDATE {s}.bimba_agent SET last_seen = now(), remote_ip = ?, agent_version = coalesce(nullif(?, ''), agent_version)"
+                    + " WHERE id = ?").params(nz(remoteIp), nz(str(body, "agentVersion", 32)), id).update();
         } else {
             db.sql("UPDATE {s}.bimba_agent SET last_seen = now(), remote_ip = ?, hostname = COALESCE(NULLIF(?, ''), hostname),"
                             + " os_name = ?, agent_version = ?, primary_ip = ?, scada = ?::jsonb, details = ?::jsonb WHERE id = ?")
@@ -424,7 +443,13 @@ public class AgentRegistry {
 
     // ------------------------------------------------------------------ helpers
 
-    private void event(long orgId, UUID agentId, String kind, String actor, String ip, Map<String, Object> detail) {
+    /** the agent's display name (its id when it has none) */
+    String displayName(UUID agentId) {
+        return db.sql("SELECT coalesce(nullif(display_name, ''), hostname, ?) FROM {s}.bimba_agent WHERE id = ?")
+                .params(agentId.toString(), agentId).query(String.class).optional().orElse(agentId.toString());
+    }
+
+    void event(long orgId, UUID agentId, String kind, String actor, String ip, Map<String, Object> detail) {
         db.sql("INSERT INTO {s}.bimba_agent_event (org_id, agent_id, kind, actor, remote_ip, detail, at)"
                         + " VALUES (?, ?, ?, ?, ?, ?::jsonb, now())")
                 .params(orgId, agentId, kind, actor.length() > 200 ? actor.substring(0, 200) : actor, nz(ip), Json.GSON.toJson(detail))

@@ -8,7 +8,9 @@ import java.nio.file.Path;
  * <pre>
  *   /opt/bimba-site-agent          program: bin/bimba-site-agent, lib/*.jar, optional runtime/ (bundled Java)
  *   /etc/bimba-site-agent          agent.json: Setu address, agent id, credential (0700 dir, 0600 file, owner bimba-agent)
- *   /var/lib/bimba-site-agent      client certificate, data sources, disk buffer, OPC UA client certificate (0700)
+ *   /var/lib/bimba-site-agent      client certificate, data sources, disk buffer, OPC UA client certificate (0700),
+ *                                  update/ (an installer the service downloaded for the updater)
+ *   /var/lib/bimba-site-agent-update   the root updater: updater.json (Setu address, on / off), last.json (0755, root)
  * </pre>
  */
 final class Paths {
@@ -48,6 +50,16 @@ final class Paths {
     /** the edge collector's OPC UA client certificate */
     static Path edgePkiDir() {
         return dataDir().resolve("edge-pki");
+    }
+
+    /** an update the service downloaded, waiting for the root updater (update/ready.json starts it) */
+    static Path updateDir() {
+        return dataDir().resolve("update");
+    }
+
+    /** the root updater's own folder: its settings and the last result (readable, not writable, by the service) */
+    static Path updaterDir() {
+        return env("BIMBA_AGENT_UPDATER_DIR", "/var/lib/bimba-site-agent-update");
     }
 
     /** written when Setu has been told about an uninstall */

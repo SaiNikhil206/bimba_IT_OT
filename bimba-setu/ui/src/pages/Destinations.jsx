@@ -24,7 +24,7 @@ export default function Destinations() {
   const { data, error, reload } = usePoll("destinations", 10_000);
   const [adding, setAdding] = useState(null);       // the service picked for a new destination (/destinations/new)
   const [confirm, setConfirm] = useState(null);     // { title, subtitle, confirm, danger, action, done }
-  const manage = can("delivery.manage");
+  const manage = can("destinations.manage");
   const list = data?.destinations ?? [];
   const unused = list.filter((d) => !d.usedBy.length).length;
   const at = useOrgPath();

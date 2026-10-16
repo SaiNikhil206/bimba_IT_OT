@@ -161,7 +161,48 @@ final class SetuClient {
         if (collector != null && "running".equals(status)) {
             body.put("collector", collector);
         }
+        Updater u = Updater.current;
+        if (u != null && "running".equals(status)) {
+            body.put("updates", u.report());              // how this computer updates itself, and how far an update got
+        }
         return send("POST", "/system/bimba-agent-heartbeat", GSON.toJson(body), cfg, 20);
+    }
+
+    /** the installers' versions and SHA-256 (no sign-in): the root updater checks a downloaded installer against it */
+    JsonObject release() throws SetuException {
+        return send("GET", "/system/bimba-agent-update/release", null, null, 30);
+    }
+
+    /** downloads the installer of an offered update (signed in as the agent) into target */
+    void download(AgentConfig cfg, String path, java.nio.file.Path target) throws SetuException {
+        HttpRequest.Builder rb = HttpRequest.newBuilder(URI.create(server + path))
+                .timeout(Duration.ofMinutes(30))
+                .header("User-Agent", "BIMBA-Site-Agent/" + AgentMain.version() + " (Linux)")
+                .header("X-BIMBA-Agent", cfg.agentId)
+                .GET();
+        if (!usesCertificate && cfg.secret != null) {
+            rb.header("Authorization", "Bearer " + cfg.secret);
+        }
+        HttpResponse<java.nio.file.Path> resp;
+        try {
+            resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofFile(target));
+        } catch (IOException e) {
+            throw new SetuException(0, "download from " + server + " failed: " + (e.getMessage() == null ? e.toString() : e.getMessage()), null, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SetuException(0, "interrupted", null, null);
+        }
+        if (resp.statusCode() != 200) {
+            String text = "";
+            try {
+                text = java.nio.file.Files.size(target) < 65_536 ? java.nio.file.Files.readString(target, StandardCharsets.UTF_8) : "";
+                java.nio.file.Files.deleteIfExists(target);
+            } catch (IOException ignored) {
+                // the error text is optional
+            }
+            String message = Json.str(parse(text), "error");
+            throw new SetuException(resp.statusCode(), message == null ? "Setu answered HTTP " + resp.statusCode() : message, null, null);
+        }
     }
 
     /** first client certificate (signed in with the secret) or renewal (signed in with the current certificate) */

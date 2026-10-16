@@ -26,6 +26,8 @@ lf "$PKG/bin/bimba-site-agent" > "$D/opt/bimba-site-agent/bin/bimba-site-agent"
 cp "$LIB"/*.jar "$D/opt/bimba-site-agent/lib/"
 echo "$VERSION" > "$D/opt/bimba-site-agent/VERSION"
 lf "$PKG/systemd/bimba-site-agent.service" > "$D/lib/systemd/system/bimba-site-agent.service"
+lf "$PKG/systemd/bimba-site-agent-update.path" > "$D/lib/systemd/system/bimba-site-agent-update.path"
+lf "$PKG/systemd/bimba-site-agent-update.service" > "$D/lib/systemd/system/bimba-site-agent-update.service"
 lf "$PKG/default/bimba-site-agent" > "$D/etc/default/bimba-site-agent"
 ln -s /opt/bimba-site-agent/bin/bimba-site-agent "$D/usr/bin/bimba-site-agent"
 for s in postinst prerm postrm; do lf "$PKG/debian/$s" > "$D/DEBIAN/$s"; done
@@ -48,7 +50,8 @@ Description: BIMBA Site Agent - sends this computer's SCADA data to the BIMBA Se
  Registers the computer with its organization on a BIMBA Setu (enrollment token or
  organization user), signs in with its own client certificate (mutual TLS), reports
  that it is online and collects the data sources configured in the Setu console
- (OPC UA, Modbus TCP) with a disk buffer for Setu outages.
+ (OPC UA, Modbus TCP) with a disk buffer for Setu outages. Updates itself
+ when Setu offers a newer installer (bimba-site-agent-update.path).
  Runs on x86-64, arm64 and armhf (Raspberry Pi) with Java 17 or newer.
 EOF
 chmod 0755 "$D/DEBIAN/postinst" "$D/DEBIAN/prerm" "$D/DEBIAN/postrm" "$D/opt/bimba-site-agent/bin/bimba-site-agent"
@@ -61,6 +64,8 @@ mkdir -p "$T/bin" "$T/lib" "$T/systemd" "$T/default"
 lf "$PKG/bin/bimba-site-agent" > "$T/bin/bimba-site-agent"
 cp "$LIB"/*.jar "$T/lib/"
 lf "$PKG/systemd/bimba-site-agent.service" > "$T/systemd/bimba-site-agent.service"
+lf "$PKG/systemd/bimba-site-agent-update.path" > "$T/systemd/bimba-site-agent-update.path"
+lf "$PKG/systemd/bimba-site-agent-update.service" > "$T/systemd/bimba-site-agent-update.service"
 lf "$PKG/default/bimba-site-agent" > "$T/default/bimba-site-agent"
 lf "$PKG/install.sh" > "$T/install.sh"
 lf "$PKG/uninstall.sh" > "$T/uninstall.sh"

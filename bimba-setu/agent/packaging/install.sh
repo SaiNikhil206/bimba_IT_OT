@@ -4,7 +4,8 @@
 #
 #   sudo ./install.sh --server https://<setu>:8443 --token <enrollment token> [--site "<site>"] [--trust-cert <sha256>]
 #   sudo ./install.sh                       files + service only; register later with: sudo bimba-site-agent install ...
-# Upgrade: unpack the newer version and run sudo ./install.sh again (the registration is kept).
+# Upgrade: unpack the newer version and run sudo ./install.sh again (the registration is kept). From 1.10 on, the agent
+# updates itself when Setu offers a newer installer (bimba-site-agent-update.path runs this script for it).
 # Remove:  sudo /opt/bimba-site-agent/uninstall.sh
 set -e
 
@@ -48,7 +49,11 @@ install -d -m 0700 -o bimba-agent -g bimba-agent /etc/bimba-site-agent /var/lib/
 
 if [ "$SYSTEMD" = 1 ]; then
     install -m 0644 "$SRC/systemd/bimba-site-agent.service" /etc/systemd/system/bimba-site-agent.service
+    install -m 0644 "$SRC/systemd/bimba-site-agent-update.path" /etc/systemd/system/bimba-site-agent-update.path
+    install -m 0644 "$SRC/systemd/bimba-site-agent-update.service" /etc/systemd/system/bimba-site-agent-update.service
     systemctl daemon-reload
+    systemctl enable bimba-site-agent-update.path >/dev/null 2>&1 || true
+    systemctl start bimba-site-agent-update.path >/dev/null 2>&1 || true
 fi
 
 if ! "$DEST/bin/bimba-site-agent" version >/dev/null; then
@@ -59,6 +64,7 @@ if [ $# -gt 0 ]; then
     exec "$DEST/bin/bimba-site-agent" install "$@"
 fi
 if [ -f /etc/bimba-site-agent/agent.json ] && [ ! -f /var/lib/bimba-site-agent/uninstall-notified ]; then
+    "$DEST/bin/bimba-site-agent" updater-setup >/dev/null 2>&1 || true
     if [ "$SYSTEMD" = 1 ]; then
         systemctl enable bimba-site-agent >/dev/null 2>&1 || true
         systemctl restart bimba-site-agent

@@ -18,7 +18,8 @@ const reasonLabel = (r) => REASON[r]?.[0] ?? r;
 
 export default function Quarantine() {
   const { can } = useSession();
-  const manage = can("delivery.manage");
+  const manage = can("quarantine.manage");
+  const read = can("messages.view");          // the readings themselves
   const toast = useToast();
   const { data, error, reload } = usePoll("quarantine", 30_000);
   const [picked, setPicked] = useState([]);
@@ -69,10 +70,10 @@ export default function Quarantine() {
               <thead><tr>
                 {manage && <th><input type="checkbox" aria-label="Select all" checked={list.length > 0 && picked.length === list.length}
                                       onChange={(e) => setPicked(e.target.checked ? list.map((x) => x.id) : [])} /></th>}
-                <th>When</th><th>From</th><th>Why</th><th className="r">Readings</th>{manage && <th />}
+                <th>When</th><th>From</th><th>Why</th><th className="r">Readings</th>{read && <th />}
               </tr></thead>
               <tbody>
-                {list.length === 0 && <Empty cols={manage ? 6 : 4}>No refused readings.</Empty>}
+                {list.length === 0 && <Empty cols={4 + (manage ? 1 : 0) + (read ? 1 : 0)}>No refused readings.</Empty>}
                 {list.map((e) => (
                   <tr key={e.id}>
                     {manage && <td className="q-sel"><input type="checkbox" aria-label={`Select ${e.id}`} checked={picked.includes(e.id)}
@@ -82,7 +83,7 @@ export default function Quarantine() {
                       {e.machines?.length > 0 && <small className="ellipsis" title={e.machines.join(", ")}>{e.machines.join(", ")}</small>}</td>
                     <td className="q-why"><Status kind="warn">{reasonLabel(e.reason)}</Status><small className="why-text" title={e.detail}>{e.detail}</small></td>
                     <td className="r q-n">{e.count.toLocaleString()}<span className="q-unit"> reading{e.count === 1 ? "" : "s"}</span></td>
-                    {manage && <td className="r q-act"><button className="btn ghost sm" onClick={() => setView(e)}>View</button></td>}
+                    {read && <td className="r q-act"><button className="btn ghost sm" onClick={() => setView(e)}>View</button></td>}
                   </tr>
                 ))}
               </tbody>
@@ -97,7 +98,7 @@ export default function Quarantine() {
           </Card>
         </>
       )}
-      {view && <Entry entry={view} busy={busy} onAct={act} onClose={() => setView(null)} />}
+      {view && <Entry entry={view} busy={busy} manage={manage} onAct={act} onClose={() => setView(null)} />}
     </>
   );
 }
@@ -191,15 +192,15 @@ function AlertSettings({ manage }) {
 
 const SHOWN = 50;
 
-function Entry({ entry, busy, onAct, onClose }) {
+function Entry({ entry, busy, manage, onAct, onClose }) {
   const { data, error } = usePoll(`quarantine/${entry.id}`, 0);
   const items = data?.items ?? [];
   const pretty = (raw) => { try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; } };
   return (
     <Modal wide title={reasonLabel(entry.reason)} subtitle={REASON[entry.reason]?.[1]} onClose={onClose}
            footer={<>
-             <button className="btn danger" disabled={busy} style={{ marginRight: "auto" }} onClick={() => onAct("discard", [entry.id])}>Discard…</button>
-             <button className="btn" disabled={busy || !data} onClick={() => onAct("replay", [entry.id])}>Replay</button>
+             {manage && <button className="btn danger" disabled={busy} style={{ marginRight: "auto" }} onClick={() => onAct("discard", [entry.id])}>Discard…</button>}
+             {manage && <button className="btn" disabled={busy || !data} onClick={() => onAct("replay", [entry.id])}>Replay</button>}
              <button className="btn ghost" onClick={onClose}>Close</button></>}>
       <Msg>{error}</Msg>
       {!data && !error && <p className="muted">Loading…</p>}

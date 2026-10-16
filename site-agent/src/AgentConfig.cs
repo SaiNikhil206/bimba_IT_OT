@@ -30,6 +30,11 @@ namespace Bimba.SiteAgent
         public static string EdgePkiDir => Path.Combine(DataDir, "edge-pki");
         /// <summary>short temp folder for the Java runtime (its Windows socket paths must stay short)</summary>
         public static string EdgeTempDir => Path.Combine(DataDir, "tmp");
+        /// <summary>an update the service downloaded, waiting for the updater service (update\ready.json)</summary>
+        public static string UpdateDir => Path.Combine(DataDir, "update");
+        /// <summary>the updater's own folder (SYSTEM and Administrators only): the checked installer and the runner</summary>
+        public static string UpdateWorkDir =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), DisplayName + " Update");
         /// <summary>written by the service when it has told Setu about an uninstall</summary>
         public static string UninstallMarker => Path.Combine(DataDir, "uninstall-notified");
     }
