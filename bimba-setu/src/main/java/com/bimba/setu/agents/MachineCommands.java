@@ -58,7 +58,6 @@ public class MachineCommands {
     static final int ANSWER_SECONDS = 60;
     /** the first edge collector version that carries out machine commands */
     static final String NEEDS = "1.9";
-    private static final List<String> OPEN = List.of("approval", "pending", "sent");
 
     private final Db db;
     private final AgentSources sources;

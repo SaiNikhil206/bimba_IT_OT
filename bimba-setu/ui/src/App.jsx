@@ -17,13 +17,16 @@ import Roles from "./pages/Roles.jsx";
 import Audit from "./pages/Audit.jsx";
 import Profile from "./pages/Profile.jsx";
 import Organizations from "./pages/Organizations.jsx";
+import About from "./pages/About.jsx";
+import Promo from "./pages/Promo.jsx";
 
-// BIMBA Setu console. Signed out -> sign-in; temporary password -> choose a new one; otherwise the shell with
+// BIMBA Setu console. Signed out -> the promotion page (/, /about) or sign-in (any other address, e.g. a shared link); temporary
+// password -> choose a new one; otherwise the shell with
 // the pages this user's permissions allow in the organization they work in (the server checks every call again).
 // Users who belong to several organizations switch between them at the top of the sidebar.
 // An organization's pages start with its slug (/northwind-water/pipelines), so a shared link opens the same page in the
 // same organization for whoever opens it: after signing in, and after moving their session to that organization.
-// The profile and the platform pages (/organizations) belong to no organization. The server forwards these addresses
+// About, the profile and the platform pages (/organizations) belong to no organization. The server forwards these addresses
 // to the console (web/SpaController.java), and an organization's slug may not be one of their first segments.
 
 // records: the page also has an address per record (/<org>/pipelines/<uid>, .../new), see useRecordAddress
@@ -43,7 +46,7 @@ const PAGES = [
 ];
 
 /** first segments that are not an organization: pages of no organization, and the old addresses without one */
-const GLOBAL = new Set(["profile", ...PAGES.filter((p) => p.platform).map((p) => p.path.slice(1))]);
+const GLOBAL = new Set(["about", "profile", ...PAGES.filter((p) => p.platform).map((p) => p.path.slice(1))]);
 const ORG_PAGES = new Set([...PAGES.filter((p) => !p.platform).map((p) => p.path.slice(1)), "delivery", "commands"]);
 
 export default function App() {
@@ -55,6 +58,8 @@ export default function App() {
       <Routes>
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/" element={<Promo />} />
+        <Route path="/about" element={<Promo />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
@@ -96,9 +101,10 @@ function Shell() {
   const denied = PAGES.filter((p) => !pages.includes(p));
   const href = (p) => (p.platform ? p.path : at(p.path));
   const route = (p) => `${p.platform ? "" : "/:org"}${p.path}${p.records ? "/*" : ""}`;
-  const home = pages[0] ? href(pages[0]) : "/profile";
+  // the start page and the logo: the first page this user can open (Overview); no page yet: About, which says whom to ask
+  const home = pages[0] ? href(pages[0]) : "/about";
   const sub = linked ? location.pathname.slice(linked.length + 1) : location.pathname;
-  const current = [...PAGES, { path: "/profile", label: "Profile" }].find((p) => sub.startsWith(p.path));
+  const current = [...PAGES, { path: "/about", label: "About" }, { path: "/profile", label: "Profile" }].find((p) => sub.startsWith(p.path));
   useEffect(() => {
     document.title = `${current?.label ?? "BIMBA"}${s.org ? ` · ${s.org.name}` : ""} · BIMBA Setu`;
     setMenu(false);
@@ -152,6 +158,7 @@ function Shell() {
           <Routes key={s.org?.id ?? "none"}>
             {pages.map((p) => <Route key={p.path} path={route(p)} element={p.element} />)}
             {denied.map((p) => <Route key={p.path} path={route(p)} element={<NoAccess page={p} home={home} />} />)}
+            <Route path="/about" element={<About pages={pages} href={href} />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/:org/delivery" element={<Navigate to={at("/pipelines")} replace />} />
             <Route path="/:org/commands/*" element={<CommandsMoved />} />

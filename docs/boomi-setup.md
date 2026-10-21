@@ -155,6 +155,21 @@ whose only column is `payload`. Django's `install_sql` installs it from
 Verified end to end on the QA Atom (`apibaseqa.easystepin.com`): a message produced to
 topic `BIMBA` was stored in `bimba_chromalab` as `boomi-es` within 10 s.
 
+**Intermittent `[1062]` with an unchanged process (fixed 2026-10-19).** The connection's
+`schemaName` (`bimba`) is set once per session, but port 6433 is a transaction-mode pooler. When
+a later statement lands on a backend with the server default search_path (`"$user", public`),
+the object type lookup finds no `bimba_ingest_param`. Some documents then fail with the 1062
+error above and others pass. The fix is a default search_path for the role, so every backend
+starts in `bimba`:
+
+```sql
+ALTER ROLE bimba_pg_admin IN DATABASE bimba_chromalab SET search_path = bimba, "$user", public;
+-- undo: ALTER ROLE bimba_pg_admin IN DATABASE bimba_chromalab RESET search_path;
+```
+
+Backends opened before the change keep the old search_path until the pooler replaces them,
+which takes up to about an hour.
+
 Database errors **fail the document** so Event Streams redelivers it (Listen
 `maxRetries` = 10, then dead-letter). Redelivery is safe: `bimba_ingest`
 de-duplicates on `messageId`.

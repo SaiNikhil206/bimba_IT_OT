@@ -200,12 +200,6 @@ final class Inventory {
         return h;
     }
 
-    /** the serial number as root sees it (stored at install: the service account cannot read DMI) */
-    static String hardwareSerial() {
-        Object s = hardware(null).get("serialNumber");
-        return s == null ? null : s.toString();
-    }
-
     private static Map<String, String> cpuInfo() {
         Map<String, String> m = new LinkedHashMap<>();
         for (String line : lines("/proc/cpuinfo")) {

@@ -16,7 +16,6 @@ import java.nio.file.Path;
 final class Paths {
     static final String SERVICE = "bimba-site-agent";
     static final String USER = "bimba-agent";
-    static final String DISPLAY_NAME = "BIMBA Site Agent";
 
     private Paths() {
     }

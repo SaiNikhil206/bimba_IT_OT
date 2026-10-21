@@ -57,6 +57,11 @@ bimba:
   https-port: ${BIMBA_HTTPS_PORT:8443}       # 0 = no HTTPS connector
   public-url: ${BIMBA_PUBLIC_URL:http://localhost:8090}   # the console address used in e-mailed links (never taken from the request)
   mail-from: ${BIMBA_MAIL_FROM:}             # sender of console e-mails (default: the SMTP user)
+  contact:                                   # the public promotion page: how a visitor reaches you (unset = not shown)
+    company: ${BIMBA_CONTACT_COMPANY:}
+    email: ${BIMBA_CONTACT_EMAIL:}
+    phone: ${BIMBA_CONTACT_PHONE:}
+    website: ${BIMBA_CONTACT_WEBSITE:}
   db:
     schema: ${BIMBA_DB_SCHEMA:bimba}
 

@@ -35,7 +35,7 @@ public class OrgService {
      * organization (web/SpaController.java) and the server's own paths: a slug may not be one of their first segments.
      */
     public static final java.util.Set<String> RESERVED = java.util.Set.of("overview", "agents", "pipelines", "destinations", "delivery", "quarantine", "registry", "commands", "machines",
-            "users", "roles", "audit", "tokens", "profile", "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system",
+            "users", "roles", "audit", "tokens", "profile", "about", "organizations", "login", "logout", "forgot-password", "reset-password", "api", "system",
             "actuator", "assets", "static", "index", "new", "admin", "settings", "help");
 
     private final Db db;
@@ -187,8 +187,11 @@ public class OrgService {
             db.sql("DELETE FROM {s}.bimba_gw_role WHERE org_id = ?").param(id).update();
             db.sql("DELETE FROM {s}.bimba_gw_setting WHERE key = ?").param("access.org." + id).update();
             db.sql("DELETE FROM {s}.bimba_org_member WHERE org_id = ?").param(id).update();
-            db.sql("DELETE FROM {s}.bimba_agent_event WHERE org_id = ? OR agent_id IN (SELECT a.id FROM {s}.bimba_agent a WHERE a.org_id = ?)")
-                    .params(id, id).update();
+            // the revoked agents' rows: events, the commands they were sent and their data sources
+            for (String t : List.of("bimba_agent_event", "bimba_agent_command", "bimba_agent_source")) {
+                db.sql("DELETE FROM {s}." + t + " WHERE org_id = ? OR agent_id IN (SELECT a.id FROM {s}.bimba_agent a WHERE a.org_id = ?)")
+                        .params(id, id).update();
+            }
             db.sql("DELETE FROM {s}.bimba_agent WHERE org_id = ?").param(id).update();
             db.sql("DELETE FROM {s}.bimba_enroll_token WHERE org_id = ?").param(id).update();
             db.sql("DELETE FROM {s}.bimba_org WHERE id = ?").param(id).update();

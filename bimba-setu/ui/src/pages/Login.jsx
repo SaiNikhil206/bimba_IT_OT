@@ -64,6 +64,7 @@ export default function Login() {
           For security, you are signed out after {p.idleMinutes} minutes without activity. After {p.maxFailedLogins} wrong
           passwords the account is locked for {p.lockMinutes} minutes.
         </p>
+        <p className="about-link"><Link className="link-sm" to="/about">What is BIMBA Setu?</Link></p>
       </div>
     </div>
   );

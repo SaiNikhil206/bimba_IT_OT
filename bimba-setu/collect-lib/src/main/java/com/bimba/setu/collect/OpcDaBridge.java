@@ -36,7 +36,6 @@ public final class OpcDaBridge {
     private final Map<String, CompletableFuture<JsonObject>> pending = new ConcurrentHashMap<>();
     private Process process;
     private BufferedWriter in;
-    private volatile JsonObject hello;
     private int starts;
     private long nextStart;
 
@@ -50,11 +49,6 @@ public final class OpcDaBridge {
             p = System.getenv("BIMBA_OPCDA_EXE");
         }
         return p == null || p.isBlank() ? null : p.trim();
-    }
-
-    /** {type:hello, version, bits} of the running bridge, or null */
-    public JsonObject hello() {
-        return hello;
     }
 
     /** sends one request and waits for its answer's result; throws with the bridge's message when it failed */
@@ -142,7 +136,6 @@ public final class OpcDaBridge {
                     JsonObject m = JsonParser.parseString(line).getAsJsonObject();
                     String type = m.has("type") ? m.get("type").getAsString() : "";
                     if ("hello".equals(type)) {
-                        hello = m;
                         starts = 0;
                     } else if ("result".equals(type) && m.has("id")) {
                         CompletableFuture<JsonObject> f = pending.get(m.get("id").getAsString());
@@ -157,7 +150,6 @@ public final class OpcDaBridge {
         } catch (IOException ignored) {
             // process ended
         }
-        hello = null;
         log.warn("OPC DA bridge stopped (exit {})", p.isAlive() ? "?" : String.valueOf(p.exitValue()));
         JsonObject gone = new JsonObject();
         gone.addProperty("ok", false);

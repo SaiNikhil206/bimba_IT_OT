@@ -7,7 +7,7 @@ import { api, onSessionEvents, setShownOrg } from "./api.js";
 const SessionContext = createContext(null);
 
 export function SessionProvider({ children }) {
-  const [state, setState] = useState({ loading: true, user: null, organizations: [], policy: {}, version: "", message: null, error: null, notice: null });
+  const [state, setState] = useState({ loading: true, user: null, organizations: [], policy: {}, version: "", contact: {}, message: null, error: null, notice: null });
 
   const apply = useCallback((user, organizations) => {
     setShownOrg(user?.org?.id);
@@ -18,7 +18,7 @@ export function SessionProvider({ children }) {
     try {
       const s = await api("session");
       setShownOrg(s.user?.org?.id);
-      setState((o) => ({ ...o, loading: false, user: s.user, organizations: s.organizations ?? [], policy: s.policy, version: s.version, error: null }));
+      setState((o) => ({ ...o, loading: false, user: s.user, organizations: s.organizations ?? [], policy: s.policy, version: s.version, contact: s.contact ?? {}, error: null }));
       return s.user;
     } catch (e) {
       setState((o) => ({ ...o, loading: false, error: e.message }));

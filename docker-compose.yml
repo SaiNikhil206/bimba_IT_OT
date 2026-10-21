@@ -69,6 +69,11 @@ services:
       BIMBA_SMTP_STARTTLS: ${BIMBA_SMTP_STARTTLS:-true}
       BIMBA_SMTP_SSL: ${BIMBA_SMTP_SSL:-false}
       BIMBA_MAIL_FROM: ${BIMBA_MAIL_FROM:-}
+      # the public promotion page (/ when signed out): how a visitor reaches you; unset values are not shown
+      BIMBA_CONTACT_COMPANY: ${BIMBA_CONTACT_COMPANY:-}
+      BIMBA_CONTACT_EMAIL: ${BIMBA_CONTACT_EMAIL:-}
+      BIMBA_CONTACT_PHONE: ${BIMBA_CONTACT_PHONE:-}
+      BIMBA_CONTACT_WEBSITE: ${BIMBA_CONTACT_WEBSITE:-}
     volumes:
       - ./ignition/bimba:/config            # config.json, demo-tags.json (tag tree), console-sources.json (devices)
       - setu-data:/data                     # disk buffer, HTTPS key store, secret.key, saved destination list

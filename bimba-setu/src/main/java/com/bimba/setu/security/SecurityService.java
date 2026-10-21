@@ -5,7 +5,6 @@ import com.bimba.setu.SetuService;
 import com.bimba.setu.Json;
 import com.bimba.setu.agents.FailureLimiter;
 import com.bimba.setu.config.BimbaConfig;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.slf4j.Logger;

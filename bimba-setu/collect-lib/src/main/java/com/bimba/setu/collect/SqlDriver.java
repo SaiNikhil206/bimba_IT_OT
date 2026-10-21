@@ -55,7 +55,6 @@ import java.util.regex.Pattern;
 public final class SqlDriver implements Driver {
     public static final Set<String> ENGINES = Set.of("sqlserver", "postgresql", "mysql");
     public static final Set<String> TLS = Set.of("off", "trust", "verify");
-    public static final Set<String> LAYOUTS = Set.of("rows", "columns");
     public static final Pattern HOST = Pattern.compile("[A-Za-z0-9._:\\[\\]-]{1,255}");
     public static final Pattern INSTANCE = Pattern.compile("[A-Za-z0-9_$#-]{1,16}");
     public static final Pattern DATABASE = Pattern.compile("[A-Za-z0-9_ .$-]{1,128}");

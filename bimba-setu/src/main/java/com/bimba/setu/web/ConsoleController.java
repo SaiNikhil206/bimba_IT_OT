@@ -71,13 +71,16 @@ public class ConsoleController {
     private final TagRegistry registry;
     private final QuarantineSettings quarantineSettings;
     private final com.bimba.setu.delivery.BufferAlerts bufferAlerts;
+    private final ContactInfo contact;
     private final com.bimba.setu.agents.AgentUpdates updates;
 
     public ConsoleController(SetuService setu, AgentRegistry agents, SecurityService security, OrgService orgs,
                              DestinationService destinations, DestinationStore store, PipelineService pipelines,
                              com.bimba.setu.security.PasswordResetService resets, EnrollTokens tokens, InstallerFile installer,
                              AgentSources sources, Ingest ingest, TagRegistry registry, QuarantineSettings quarantineSettings,
-                             com.bimba.setu.delivery.BufferAlerts bufferAlerts, com.bimba.setu.agents.AgentUpdates updates) {
+                             com.bimba.setu.delivery.BufferAlerts bufferAlerts, com.bimba.setu.agents.AgentUpdates updates,
+                             ContactInfo contact) {
+        this.contact = contact;
         this.bufferAlerts = bufferAlerts;
         this.updates = updates;
         this.sources = sources;
@@ -105,6 +108,7 @@ public class ConsoleController {
         m.put("organizations", p == null ? List.of() : security.organizations(p));
         m.put("policy", security.policy());
         m.put("version", BimbaSetuApplication.VERSION);
+        m.put("contact", contact.json());     // also signed out: the promotion page shows how to reach the vendor
         return m;
     }
 
