@@ -7,12 +7,8 @@ services:
     dockerfilePath: ./bimba-setu/Dockerfile
     dockerContext: ./bimba-setu
     branch: release/dev
-    plan: starter            # persistent disk needs a paid plan
+    plan: free               # sleeps after 15 min idle; no disk, so /data resets on restart
     healthCheckPath: /
-    disk:
-      name: setu-data
-      mountPath: /data       # disk buffer, key store, secret.key
-      sizeGB: 1
     envVars:
       - key: PORT
         value: "8090"
