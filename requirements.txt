@@ -1,7 +1,7 @@
 # Vercel Python function dependencies (Docker uses django-backend/requirements.txt)
 Django>=4.2,<4.3
 channels==3.0.5
-psycopg[binary]==3.2.3
+psycopg[binary]>=3.2.3,<3.3
 paho-mqtt==2.1.0
 asyncua==1.1.5
 kafka-python==2.2.15
