@@ -24,7 +24,7 @@ export default function Overview() {
 
 function Body({ st, org, whole }) {
   const at = useOrgPath();
-  const col = st.collector || { devices: [], machines: [] };
+  const col = { devices: [], machines: [], ...(st.collector || {}) };
   const del = st.delivery || { destinations: [], pipelines: [] };
   const pipes = del.pipelines ?? [];
   const idle = pipes.filter((p) => !p.activeDestination);
