@@ -5,9 +5,9 @@
     "api/index.py": { "maxDuration": 30, "includeFiles": "django-backend/**" }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index" },
-    { "source": "/admin/:path*", "destination": "/api/index" },
-    { "source": "/django-static/:path*", "destination": "/api/index" },
-    { "source": "/((?!api/|admin/|django-static/).*)", "destination": "/index.html" }
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/admin(/.*)?", "destination": "/api/index" },
+    { "source": "/django-static/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api/|admin|django-static/).*)", "destination": "/index.html" }
   ]
 }
