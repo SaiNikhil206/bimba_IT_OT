@@ -1,0 +1,51 @@
+# BIMBA Setu on an Oracle Cloud Always Free VM (Ampere ARM, Ubuntu 22.04/24.04).
+#   Caddy   443 / 80   HTTPS for the console, free certificate from Let's Encrypt (needs DOMAIN)
+#   Setu    8443       agents connect here directly: Setu's own certificate + mutual TLS (client certificates)
+# Run from this folder:  docker compose up -d --build     (see README.md)
+name: bimba-setu
+
+services:
+  setu:
+    build: ../../bimba-setu             # builds natively on the VM's CPU (arm64)
+    restart: unless-stopped
+    hostname: bimba-setu
+    environment:
+      BIMBA_DB_HOST: ${BIMBA_DB_HOST:?set BIMBA_DB_HOST in .env}
+      BIMBA_DB_PORT: ${BIMBA_DB_PORT:-6433}
+      BIMBA_DB_NAME: ${BIMBA_DB_NAME:-bimba_chromalab}
+      BIMBA_DB_USER: ${BIMBA_DB_USER:?set BIMBA_DB_USER in .env}
+      BIMBA_DB_PASSWORD: ${BIMBA_DB_PASSWORD:?set BIMBA_DB_PASSWORD in .env}
+      BIMBA_DB_SCHEMA: ${BIMBA_DB_SCHEMA:-bimba_ignition}
+      BIMBA_SECRET_KEY: ${BIMBA_SECRET_KEY:-}
+      BOOMI_ES_PRODUCE_TOKEN: ${BOOMI_ES_PRODUCE_TOKEN:-}
+      BIMBA_PUBLIC_URL: https://${DOMAIN:?set DOMAIN in .env}
+      # names / IPs the self-signed agent certificate (port 8443) is valid for
+      BIMBA_TLS_NAMES: ${DOMAIN},${PUBLIC_IP:-}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
+    volumes:
+      - setu-data:/data                 # buffer, HTTPS key store, agent certificate authority, secret.key
+      - setu-config:/config             # config.json, tag file
+    expose:
+      - "8090"
+    ports:
+      - "8443:8443"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [setu]
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  setu-data:
+  setu-config:
+  caddy-data:
+  caddy-config:
