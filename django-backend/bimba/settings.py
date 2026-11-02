@@ -33,6 +33,12 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
+if env("VERCEL"):  # serverless: serve admin static files from the app itself
+    MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")
+    WHITENOISE_USE_FINDERS = True
+    DEBUG = env("DJANGO_DEBUG", "0") == "1"
+    CSRF_TRUSTED_ORIGINS += ["https://*.vercel.app"]
+
 ROOT_URLCONF = "bimba.urls"
 ASGI_APPLICATION = "bimba.asgi.application"
 

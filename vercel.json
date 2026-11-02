@@ -1,0 +1,13 @@
+{
+  "buildCommand": "npm --prefix react-ui install --no-audit --no-fund && npm --prefix react-ui run build",
+  "outputDirectory": "react-ui/dist",
+  "functions": {
+    "api/index.py": { "maxDuration": 30, "includeFiles": "django-backend/**" }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/admin/:path*", "destination": "/api/index" },
+    { "source": "/django-static/:path*", "destination": "/api/index" },
+    { "source": "/((?!api/|admin/|django-static/).*)", "destination": "/index.html" }
+  ]
+}
