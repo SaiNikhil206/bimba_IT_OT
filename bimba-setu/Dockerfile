@@ -26,6 +26,14 @@ RUN useradd --system --uid 10001 --home /opt/bimba-setu bimba \
  && mkdir -p /config /data /opt/bimba-setu \
  && echo '{"name":"BIMBA","tagType":"Folder","tags":[]}' > /config/demo-tags.json \
  && chown -R bimba /config /data
+# Site Agent installers offered in the console. docker-compose mounts site-agent/dist over /installers; cloud builds
+# (Render) have no such folder, so fetch the release files published on GitHub. A missing file is skipped, not fatal.
+ARG INSTALLERS_URL=https://github.com/SaiNikhil206/bimba_IT_OT/releases/download/site-agent-installers
+RUN mkdir -p /installers \
+ && for f in BIMBA-Site-Agent-Setup.exe BIMBA-Site-Agent.msi bimba-site-agent_all.deb bimba-site-agent-linux.tar.gz release.json release-linux.json; do \
+      curl -fsSL --retry 3 -o "/installers/$f" "$INSTALLERS_URL/$f" || { echo "installer $f not available"; rm -f "/installers/$f"; }; \
+    done \
+ && ls -la /installers
 COPY --from=build /src/build/libs/bimba-setu.jar /opt/bimba-setu/bimba-setu.jar
 ENV BIMBA_CONFIG_DIR=/config BIMBA_DATA_DIR=/data TZ=UTC JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60"
 USER bimba
