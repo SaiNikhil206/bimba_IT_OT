@@ -12,6 +12,10 @@ services:
     envVars:
       - key: PORT
         value: "8090"
+      # free plan = 512 MB: serial GC, small thread stacks and capped metaspace/code cache leave more of it to the heap;
+      # on an out-of-memory the JVM exits at once so Render restarts it instead of leaving it hung
+      - key: JAVA_TOOL_OPTIONS
+        value: "-XX:MaxRAMPercentage=65 -XX:+UseSerialGC -Xss512k -XX:MaxMetaspaceSize=80m -XX:ReservedCodeCacheSize=40m -XX:MaxDirectMemorySize=32m -XX:+ExitOnOutOfMemoryError"
       - key: BIMBA_DB_HOST
         sync: false
       - key: BIMBA_DB_PORT
