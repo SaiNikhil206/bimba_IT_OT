@@ -1,0 +1,36 @@
+# Render Blueprint: BIMBA Setu (Spring Boot, Java 21) built from bimba-setu/Dockerfile.
+# Render terminates HTTPS on 443 and forwards to the console port 8090.
+services:
+  - type: web
+    name: bimba-setu
+    runtime: docker
+    dockerfilePath: ./bimba-setu/Dockerfile
+    dockerContext: ./bimba-setu
+    branch: release/dev
+    plan: starter            # persistent disk needs a paid plan
+    healthCheckPath: /
+    disk:
+      name: setu-data
+      mountPath: /data       # disk buffer, key store, secret.key
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: "8090"
+      - key: BIMBA_DB_HOST
+        sync: false
+      - key: BIMBA_DB_PORT
+        value: "6433"
+      - key: BIMBA_DB_NAME
+        value: bimba_chromalab
+      - key: BIMBA_DB_USER
+        sync: false
+      - key: BIMBA_DB_PASSWORD
+        sync: false
+      - key: BIMBA_DB_SCHEMA
+        value: bimba_ignition
+      - key: BIMBA_SECRET_KEY
+        generateValue: true
+      - key: BIMBA_PUBLIC_URL
+        sync: false
+      - key: BOOMI_ES_PRODUCE_TOKEN
+        sync: false
