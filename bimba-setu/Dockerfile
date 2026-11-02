@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/home/gradle/.gradle gradle bootJar --no-daemon -q
 
 FROM mirror.gcr.io/library/eclipse-temurin:21-jre
 RUN useradd --system --uid 10001 --home /opt/bimba-setu bimba \
- && mkdir -p /config /data /opt/bimba-setu && chown bimba /config /data
+ && mkdir -p /config /data /opt/bimba-setu \n && echo '{"name":"BIMBA","tagType":"Folder","tags":[]}' > /config/demo-tags.json \n && chown -R bimba /config /data
 COPY --from=build /src/build/libs/bimba-setu.jar /opt/bimba-setu/bimba-setu.jar
 ENV BIMBA_CONFIG_DIR=/config BIMBA_DATA_DIR=/data TZ=UTC JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60"
 USER bimba
